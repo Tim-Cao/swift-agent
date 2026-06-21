@@ -24,8 +24,7 @@ class LLMSettings(BaseSettings):
     base_url: str | None = None
     model: str = "gpt-4o-mini"
     temperature: float = 0.7
-    max_tokens: int = 2048
-    timeout: int = 60
+    # max_tokens / timeout 已移除(以服务端默认为准)
 
 
 class DatabaseSettings(BaseSettings):
