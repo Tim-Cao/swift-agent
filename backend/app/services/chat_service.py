@@ -1,4 +1,10 @@
-"""聊天业务:组装消息、调用 supervisor、流式产出事件(dict 透传)。"""
+"""聊天业务:组装消息、调用 supervisor、流式产出前端 SSE 契约事件。
+
+v4 改动:把 deepagents 原生 astream_events(v2) 事件
+(on_chat_model_stream / on_tool_start / on_tool_end / on_chain_*) 映射为前端
+期望的 5 类事件(token / tool_call / tool_result / done / error),
+中间链路事件(on_chain_start / on_chain_end / metadata 等)直接丢弃。
+"""
 
 from __future__ import annotations
 
@@ -35,14 +41,19 @@ async def stream_chat(
     session_id: str,
     user_message: str,
 ) -> AsyncIterator[dict[str, Any]]:
-    """流式生成 deepagents 事件(dict 透传,最后写库 + done)。
+    """流式生成前端 SSE 契约事件(后由 chat.py 渲染为 SSE 行)。
+
+    事件 schema:
+      - {"event": "token",      "data": {"content": "<incr>"}}
+      - {"event": "tool_call",  "data": {"name": "...", "input": {...}}}
+      - {"event": "tool_result","data": {"name": "...", "output": "..."}}
+      - {"event": "done",       "data": {"session_id": "..."}}
+      - {"event": "error",      "data": {"message": "..."}}
 
     关键:
       - 通过 make_thread_config(session_id) 把调用绑定到 deepagents 的 thread,
-        配合 InMemorySaver 实现多轮对话 stateful 记忆(messages/todos/files
-        自动按 thread_id 持久化)。
-      - 业务库(SQLite)与 LangGraph checkpointer 是两个独立层:
-        业务库存展示用历史,checkpointer 存 agent 运行时 state;两者通过 session_id 关联。
+        配合 InMemorySaver 实现多轮对话 stateful 记忆。
+      - 业务库(SQLite)与 LangGraph checkpointer 是两个独立层,通过 session_id 关联。
       - 不传 context(当前阶段无业务 context,Runtime[Context] / ToolRuntime[Context]
         留给后续自定义 middleware 使用)。
     """
@@ -64,19 +75,22 @@ async def stream_chat(
         elif m.role == "system":
             lc_messages.append(SystemMessage(content=m.content))
 
-    # 3. stateful 调用(仅传 config,不传 context)
+    # 3. stateful 调用 + 事件映射
     agent = get_supervisor()
     config = make_thread_config(session_id)
 
     full_text_parts: list[str] = []
     try:
-        async for event in agent.astream_events(
+        async for raw in agent.astream_events(
             {"messages": lc_messages},
             config=config,
             version="v2",
         ):
-            _maybe_collect_token(event, full_text_parts)
-            yield event
+            mapped = _map_event(raw)
+            if mapped is None:
+                continue
+            _collect_text(mapped, full_text_parts)
+            yield mapped
     except Exception as e:  # noqa: BLE001
         logger.exception("stream failed")
         yield {"event": "error", "data": {"message": str(e)}}
@@ -91,11 +105,60 @@ async def stream_chat(
     yield {"event": "done", "data": {"session_id": session_id}}
 
 
-def _maybe_collect_token(event: dict[str, Any], sink: list[str]) -> None:
-    """从 on_chat_model_stream 事件中提取增量文本(仅用于持久化,不阻断事件透传)。"""
-    if event.get("event") != "on_chat_model_stream":
+# --------------------------------------------------------------------------- #
+# 事件映射
+# --------------------------------------------------------------------------- #
+
+
+def _map_event(raw: dict[str, Any]) -> dict[str, Any] | None:
+    """把 deepagents 原生 astream_events(v2) 事件映射为前端 SSE 契约。
+
+    不需要的事件(on_chain_start / on_chain_end / on_chain_stream / metadata /
+    on_tool_start 的纯中间件内部事件等)返回 None,调用方直接 continue。
+    """
+    name = raw.get("event")
+    data = raw.get("data") or {}
+
+    if name == "on_chat_model_stream":
+        chunk = data.get("chunk")
+        content = getattr(chunk, "content", None)
+        if isinstance(content, str) and content:
+            return {"event": "token", "data": {"content": content}}
+        return None
+
+    if name == "on_tool_start":
+        return {
+            "event": "tool_call",
+            "data": {
+                "name": data.get("name"),
+                "input": data.get("input"),
+            },
+        }
+
+    if name == "on_tool_end":
+        # on_tool_end.output 在不同版本里可能是 ToolMessage / str / dict,
+        # 统一尽量序列化为字符串,避免 Pydantic Message 透传到 SSE。
+        output = data.get("output")
+        if hasattr(output, "content"):
+            output_repr = getattr(output, "content", output)
+        else:
+            output_repr = output
+        return {
+            "event": "tool_result",
+            "data": {
+                "name": data.get("name"),
+                "output": output_repr,
+            },
+        }
+
+    # on_chain_start / on_chain_end / on_chain_stream / metadata 等:不下发
+    return None
+
+
+def _collect_text(event: dict[str, Any], sink: list[str]) -> None:
+    """从已映射的 token 事件中收集增量文本,用于流结束后写库。"""
+    if event.get("event") != "token":
         return
-    chunk = (event.get("data") or {}).get("chunk")
-    content = getattr(chunk, "content", None)
+    content = (event.get("data") or {}).get("content")
     if isinstance(content, str) and content:
         sink.append(content)

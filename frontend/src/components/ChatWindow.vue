@@ -7,6 +7,7 @@
         :key="i"
         :role="m.role"
         :content="m.content"
+        :pending="isPending(i)"
       />
     </div>
     <InputBar :disabled="isStreaming" @send="onSend" />
@@ -40,6 +41,19 @@ watch(
   () => props.messages.length,
   () => scrollToBottom(),
 )
+
+/**
+ * 是否显示三点等待动画:仅"最后一条 assistant 消息 + 流式进行中 + 尚未收到首个 token"为 true。
+ * 首个 token 到达后 m.content 不再为空,pending 自动转 false,动画被 MarkdownView 替换。
+ */
+function isPending(index) {
+  const m = props.messages[index]
+  if (!m || m.role !== 'assistant') return false
+  if (index !== props.messages.length - 1) return false
+  if (!isStreaming.value) return false
+  if (m.content && m.content.length > 0) return false
+  return true
+}
 
 async function onSend(text) {
   if (!props.sessionId) {
