@@ -1,9 +1,9 @@
 """DeepAgents Supervisor 装配(@lru_cache 单例)。
 
-state / runtime 设计(基于 deepagents 源码 deepagents/graph.py:236-256):
+state / runtime 设计(简化):
   - state_schema 不传 → 用 deepagents 默认 DeepAgentState
-    (继承 AgentState,messages + jump_to + structured_response,messages 用 DeltaChannel 优化 checkpoint)
-  - context_schema=AppContext → 让 tool/middleware 通过 runtime.context.session_id 读取
+  - context_schema 不传 → ContextT = None(业务 context 留给后续自定义 middleware,
+    通过 Runtime[Context] / ToolRuntime[Context] 访问;当前阶段不需)
   - checkpointer=InMemorySaver() → 启用 thread 级 state 持久化
     (state 由 deepagents 内部按 thread_id 自动维护,调用方不传 state)
   - store=InMemoryStore() → 跨 thread 长期记忆(deepagents 不兜底)
@@ -19,7 +19,6 @@ from deepagents import create_deep_agent
 
 from app.core.config import get_settings
 from app.supervisor.checkpointer import get_checkpointer
-from app.supervisor.context import AppContext
 from app.supervisor.llm import build_chat_model
 from app.supervisor.store import get_store
 
@@ -49,8 +48,7 @@ def _build_agent() -> Any:
         subagents=ALL_SUBAGENTS,
         skills=skills,
         middleware=ALL_MIDDLEWARES,
-        # state_schema 不传 → DeepAgentState
-        context_schema=AppContext,
+        # state_schema / context_schema 均不传(默认 DeepAgentState + ContextT=None)
         checkpointer=get_checkpointer(),
         store=get_store(),
     )
