@@ -1,4 +1,4 @@
-"""聊天相关 schema / supervisor 配置的轻量单测(StreamEvent 已删除,改为 dict 透传)。"""
+"""聊天相关 schema / supervisor 配置的轻量单测。"""
 
 from __future__ import annotations
 
@@ -24,16 +24,6 @@ def test_chat_request_rejects_empty():
 
     with pytest.raises(ValidationError):
         ChatRequest(message="")
-
-
-def test_app_context_dataclass():
-    """AppContext 是 dataclass,可作为 deepagents context_schema。"""
-    from app.supervisor.context import AppContext
-
-    ctx = AppContext(session_id="s1", user_id="u1", tenant="t1")
-    assert ctx.session_id == "s1"
-    assert ctx.user_id == "u1"
-    assert ctx.tenant == "t1"
 
 
 def test_make_thread_config():

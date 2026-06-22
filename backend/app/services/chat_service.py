@@ -14,7 +14,6 @@ from app.services.session_service import (
     rename_if_first_user_message,
 )
 from app.supervisor.builder import get_supervisor, make_thread_config
-from app.supervisor.context import AppContext
 
 logger = logging.getLogger(__name__)
 
@@ -35,16 +34,17 @@ async def stream_chat(
     db: AsyncSession,
     session_id: str,
     user_message: str,
-    user_id: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """流式生成 deepagents 事件(dict 透传,最后写库 + done)。
 
     关键:
       - 通过 make_thread_config(session_id) 把调用绑定到 deepagents 的 thread,
-        配合 InMemorySaver 实现多轮对话 stateful 记忆(messages/todos/files 自动按 thread_id 持久化)。
-      - 通过 context=AppContext(...) 注入运行时业务上下文,供 tool/middleware 读取。
+        配合 InMemorySaver 实现多轮对话 stateful 记忆(messages/todos/files
+        自动按 thread_id 持久化)。
       - 业务库(SQLite)与 LangGraph checkpointer 是两个独立层:
         业务库存展示用历史,checkpointer 存 agent 运行时 state;两者通过 session_id 关联。
+      - 不传 context(当前阶段无业务 context,Runtime[Context] / ToolRuntime[Context]
+        留给后续自定义 middleware 使用)。
     """
     # 1. 持久化用户消息 + 触发重命名
     await repo.append_message(db, session_id=session_id, role="user", content=user_message)
@@ -64,17 +64,15 @@ async def stream_chat(
         elif m.role == "system":
             lc_messages.append(SystemMessage(content=m.content))
 
-    # 3. stateful 调用
+    # 3. stateful 调用(仅传 config,不传 context)
     agent = get_supervisor()
     config = make_thread_config(session_id)
-    context = AppContext(session_id=session_id, user_id=user_id)
 
     full_text_parts: list[str] = []
     try:
         async for event in agent.astream_events(
             {"messages": lc_messages},
             config=config,
-            context=context,
             version="v2",
         ):
             _maybe_collect_token(event, full_text_parts)
