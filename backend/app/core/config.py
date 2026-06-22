@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -56,6 +57,28 @@ class ServerSettings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
 
 
+class PersistenceSettings(BaseSettings):
+    """LangGraph 持久化后端选择(PERSISTENCE_ 前缀,与 LangGraph 生态对齐)。
+
+    checkpointer_backend: thread 级 state(checkpoint)后端
+    store_backend:       跨 thread 长期记忆(store)后端
+    当前实现仅 memory;postgres 分支在工厂函数中保留 NotImplementedError。
+    checkpoint_db_url / store_db_url:留给未来 Postgres 实现连接串占位。
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="PERSISTENCE_",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    checkpointer_backend: Literal["memory", "postgres"] = "memory"
+    store_backend: Literal["memory", "postgres"] = "memory"
+    checkpoint_db_url: str | None = None
+    store_db_url: str | None = None
+
+
 class AppSettings(BaseSettings):
     """应用聚合配置(无前缀)。"""
 
@@ -74,6 +97,7 @@ class AppSettings(BaseSettings):
     llm: LLMSettings = LLMSettings()
     db: DatabaseSettings = DatabaseSettings()
     server: ServerSettings = ServerSettings()
+    persistence: PersistenceSettings = PersistenceSettings()
 
 
 @lru_cache

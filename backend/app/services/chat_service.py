@@ -1,9 +1,15 @@
 """聊天业务:组装消息、调用 supervisor、流式产出前端 SSE 契约事件。
 
-v4 改动:把 deepagents 原生 astream_events(v2) 事件
-(on_chat_model_stream / on_tool_start / on_tool_end / on_chain_*) 映射为前端
-期望的 5 类事件(token / tool_call / tool_result / done / error),
-中间链路事件(on_chain_start / on_chain_end / metadata 等)直接丢弃。
+v5 改动:
+  - input 是 delta:只传本轮新增的 [HumanMessage(content=user_message)],
+    不再从业务库加载历史、不再拼全量 messages。
+  - 历史 messages 由 LangGraph loop 启动时 channels_from_checkpoint
+    从 checkpointer 还原,然后 deepagents 的 DeltaChannel._messages_delta_reducer
+    按 message.id 去重合并(DeepAgentState.messages: DeltaChannel)。
+  - 不传全量 messages 是为了避免 ensure_message_ids 给老消息赋新 UUID,
+    污染 checkpoint ID 链,扰乱 tool_call↔tool_message 配对与 summarization tombstone。
+  - 业务库(SQLite)与 checkpointer 是两个独立层:业务库存审计/展示,
+    checkpointer 存图运行时 state;两者通过 session_id 关联。
 """
 
 from __future__ import annotations
@@ -11,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any, AsyncIterator
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repository as repo
@@ -49,40 +55,23 @@ async def stream_chat(
       - {"event": "tool_result","data": {"name": "...", "output": "..."}}
       - {"event": "done",       "data": {"session_id": "..."}}
       - {"event": "error",      "data": {"message": "..."}}
-
-    关键:
-      - 通过 make_thread_config(session_id) 把调用绑定到 deepagents 的 thread,
-        配合 InMemorySaver 实现多轮对话 stateful 记忆。
-      - 业务库(SQLite)与 LangGraph checkpointer 是两个独立层,通过 session_id 关联。
-      - 不传 context(当前阶段无业务 context,Runtime[Context] / ToolRuntime[Context]
-        留给后续自定义 middleware 使用)。
     """
-    # 1. 持久化用户消息 + 触发重命名
+    # 1. 业务库持久化用户消息 + 触发重命名(checkpointer 不依赖)
     await repo.append_message(db, session_id=session_id, role="user", content=user_message)
     await rename_if_first_user_message(db, session_id, user_message)
     await db.commit()
 
-    # 2. 加载历史(拼成 LangChain messages)
-    history = await repo.list_messages(db, session_id)
-    await db.commit()
-
-    lc_messages: list = []
-    for m in history:
-        if m.role == "user":
-            lc_messages.append(HumanMessage(content=m.content))
-        elif m.role == "assistant":
-            lc_messages.append(AIMessage(content=m.content))
-        elif m.role == "system":
-            lc_messages.append(SystemMessage(content=m.content))
-
-    # 3. stateful 调用 + 事件映射
+    # 2. 调用 supervisor:input 只传本轮增量 user message。
+    #    历史 messages 由 LangGraph 从 checkpointer 还原 + deepagents 的
+    #    DeltaChannel._messages_delta_reducer 按 ID 去重合并。
     agent = get_supervisor()
     config = make_thread_config(session_id)
+    delta_input = {"messages": [HumanMessage(content=user_message)]}
 
     full_text_parts: list[str] = []
     try:
         async for raw in agent.astream_events(
-            {"messages": lc_messages},
+            delta_input,
             config=config,
             version="v2",
         ):
@@ -95,7 +84,7 @@ async def stream_chat(
         logger.exception("stream failed")
         yield {"event": "error", "data": {"message": str(e)}}
 
-    # 4. 写库并发送 done
+    # 3. 业务库持久化 assistant 回复 + 发送 done
     full_text = "".join(full_text_parts)
     if full_text:
         await repo.append_message(
