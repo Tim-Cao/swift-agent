@@ -2,7 +2,7 @@
   <div class="session-list">
     <div class="header">
       <span>会话</span>
-      <el-button size="small" type="primary" @click="onNew">+ 新建</el-button>
+      <el-button size="small" type="primary" @click="$emit('new')">+ 新建</el-button>
     </div>
     <ul>
       <li
