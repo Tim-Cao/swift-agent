@@ -7,6 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import repository as repo
 from app.services.session_service import (
+    MAX_TITLE_LEN,
+    TITLE_SUFFIX,
     create_default_session,
     rename_if_first_user_message,
 )
@@ -42,7 +44,22 @@ async def test_rename_first_user_message(db: AsyncSession):
     refreshed = await repo.get_session(db, s.id)
     assert refreshed is not None
     assert refreshed.title != "新会话"
-    assert len(refreshed.title) <= 30
+    # 16 字符前缀 + "…" 后缀,总长 17
+    assert refreshed.title.endswith(TITLE_SUFFIX)
+    assert refreshed.title.startswith(long_msg[:MAX_TITLE_LEN])
+    assert len(refreshed.title) == MAX_TITLE_LEN + len(TITLE_SUFFIX)
+
+
+@pytest.mark.asyncio
+async def test_short_message_no_ellipsis(db: AsyncSession):
+    """短消息(<=16 字符)不应加省略号。"""
+    s = await create_default_session(db)
+    msg = "短消息"
+    await repo.append_message(db, session_id=s.id, role="user", content=msg)
+    await rename_if_first_user_message(db, s.id, msg)
+    refreshed = await repo.get_session(db, s.id)
+    assert refreshed is not None
+    assert refreshed.title == "短消息"
 
 
 @pytest.mark.asyncio
@@ -51,7 +68,38 @@ async def test_rename_only_first_user_message(db: AsyncSession):
     await repo.append_message(db, session_id=s.id, role="user", content="第一条")
     await rename_if_first_user_message(db, s.id, "第一条")
     first_title = (await repo.get_session(db, s.id)).title
+
+    # 用户手动 rename 了一次 → 标题不再是 "新会话"
+    await repo.rename_session(db, s.id, "用户改的名")
     await repo.append_message(db, session_id=s.id, role="user", content="第二条")
     await rename_if_first_user_message(db, s.id, "第二条")
     after = (await repo.get_session(db, s.id)).title
-    assert after == first_title
+    # 第二条既不应该走 count==1 分支(因为现在 count==2),
+    # 也不应该覆盖用户改过的标题
+    assert after == "用户改的名"
+
+
+@pytest.mark.asyncio
+async def test_second_message_does_not_rename(db: AsyncSession):
+    """新会话第 2 条 user message 时,count==2,不应再 rename。"""
+    s = await create_default_session(db)
+    await repo.append_message(db, session_id=s.id, role="user", content="第一条")
+    await rename_if_first_user_message(db, s.id, "第一条")
+    title_after_first = (await repo.get_session(db, s.id)).title
+
+    # 第二条(标题仍是"第一条",不是默认的"新会话")
+    await repo.append_message(db, session_id=s.id, role="user", content="第二条")
+    await rename_if_first_user_message(db, s.id, "第二条")
+    title_after_second = (await repo.get_session(db, s.id)).title
+    assert title_after_second == title_after_first
+
+
+@pytest.mark.asyncio
+async def test_blank_message_does_not_rename(db: AsyncSession):
+    """消息全空白时,不应把标题改成空白。"""
+    s = await create_default_session(db)
+    await repo.append_message(db, session_id=s.id, role="user", content="   \n\n  ")
+    await rename_if_first_user_message(db, s.id, "   \n\n  ")
+    refreshed = await repo.get_session(db, s.id)
+    assert refreshed is not None
+    assert refreshed.title == "新会话"
