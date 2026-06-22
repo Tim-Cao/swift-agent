@@ -7,10 +7,16 @@
         :key="i"
         :role="m.role"
         :content="m.content"
+        :attachments="m.attachments"
         :pending="isPending(i)"
       />
     </div>
-    <InputBar :disabled="isStreaming" @send="onSend" />
+    <InputBar
+      ref="inputBarRef"
+      :disabled="isStreaming"
+      :session-id="sessionId"
+      @send="onSend"
+    />
   </div>
 </template>
 
@@ -24,9 +30,10 @@ const props = defineProps({
   messages: { type: Array, required: true },
   sessionId: { type: String, default: null },
 })
-const emit = defineEmits(['appendMessage'])
+const emit = defineEmits(['appendMessage', 'updateSessionId'])
 
 const scrollRef = ref(null)
+const inputBarRef = ref(null)
 const { isStreaming, send } = useChat()
 
 let currentAssistant = null
@@ -55,20 +62,41 @@ function isPending(index) {
   return true
 }
 
-async function onSend(text) {
+async function onSend(payload) {
+  // payload: { message, upload_dir }
   if (!props.sessionId) {
     emit('appendMessage', { role: 'system', content: '请先在左侧选择或新建会话' })
     return
   }
-  emit('appendMessage', { role: 'user', content: text })
-  currentAssistant = { role: 'assistant', content: '' }
+  emit('appendMessage', { role: 'user', content: payload.message })
+  currentAssistant = {
+    role: 'assistant',
+    content: '',
+    attachments: [],
+  }
   emit('appendMessage', currentAssistant)
 
   await send(
-    { session_id: props.sessionId, message: text },
+    {
+      session_id: props.sessionId,
+      message: payload.message,
+      upload_dir: payload.upload_dir || null,
+    },
     {
       onToken: (t) => {
         if (currentAssistant) currentAssistant.content += t
+      },
+      onFile: (fileMeta) => {
+        // 后端在 ExcelWriterAgent 完成时推送的 file 事件
+        if (currentAssistant) {
+          if (!currentAssistant.attachments) currentAssistant.attachments = []
+          currentAssistant.attachments.push({
+            url: fileMeta.url,
+            filename: fileMeta.filename,
+            mime: fileMeta.mime,
+            size_bytes: fileMeta.size_bytes,
+          })
+        }
       },
       onDone: () => {
         currentAssistant = null

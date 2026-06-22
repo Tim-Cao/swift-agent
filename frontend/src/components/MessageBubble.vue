@@ -15,18 +15,53 @@
         </div>
         <MarkdownView v-else :content="content" />
       </template>
-      <div v-else class="text">{{ content }}</div>
+      <template v-else>
+        <div v-if="content" class="text">{{ content }}</div>
+      </template>
+
+      <!-- 附件下载卡(Excel / CSV 等结果文件) -->
+      <div v-if="attachments && attachments.length" class="attachments">
+        <a
+          v-for="(att, idx) in attachments"
+          :key="idx"
+          :href="att.url"
+          :download="att.filename"
+          target="_blank"
+          rel="noopener"
+          class="file-card"
+        >
+          <el-icon class="file-icon"><Document /></el-icon>
+          <div class="file-info">
+            <div class="file-name">{{ att.filename }}</div>
+            <div class="file-meta">{{ formatBytes(att.size_bytes) }} · 点击下载</div>
+          </div>
+          <el-icon class="download-icon"><Download /></el-icon>
+        </a>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
+import { Document, Download } from '@element-plus/icons-vue'
 import MarkdownView from './MarkdownView.vue'
+
 defineProps({
   role: { type: String, required: true },
   content: { type: String, default: '' },
   pending: { type: Boolean, default: false },
+  /**
+   * attachments: [{ url, filename, mime, size_bytes }]
+   */
+  attachments: { type: Array, default: () => [] },
 })
+
+function formatBytes(n) {
+  if (!n && n !== 0) return ''
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / 1024 / 1024).toFixed(2)} MB`
+}
 </script>
 
 <style scoped>
@@ -93,5 +128,56 @@ defineProps({
     transform: translateY(-4px);
     opacity: 1;
   }
+}
+
+/* 附件下载卡片 */
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+.file-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: #fff;
+  border: 1px solid #e6e8eb;
+  border-radius: 6px;
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.file-card:hover {
+  border-color: #409eff;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.12);
+}
+.file-icon {
+  font-size: 28px;
+  color: #409eff;
+  flex-shrink: 0;
+}
+.file-info {
+  flex: 1;
+  min-width: 0;
+}
+.file-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: #303133;
+  word-break: break-all;
+}
+.file-meta {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+.download-icon {
+  color: #909399;
+  flex-shrink: 0;
+}
+.file-card:hover .download-icon {
+  color: #409eff;
 }
 </style>

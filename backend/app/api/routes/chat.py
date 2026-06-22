@@ -64,8 +64,12 @@ async def stream_chat_endpoint(
     async def event_generator():
         session_id, _ = await ensure_session(db, body.session_id, body.agent_name)
         await db.commit()
+        # 若有 upload_dir,把它加到 message 头部让 supervisor 识别
+        message = body.message
+        if body.upload_dir:
+            message = f"[UPLOAD_DIR:{body.upload_dir}] {body.message}".strip()
         try:
-            async for event in stream_chat(db, session_id, body.message):
+            async for event in stream_chat(db, session_id, message, upload_dir=body.upload_dir):
                 yield _format_sse(event)
                 await asyncio.sleep(0)
         except asyncio.CancelledError:

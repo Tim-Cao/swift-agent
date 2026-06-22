@@ -2,8 +2,8 @@
 
 /**
  * 流式发送消息
- * @param {{ session_id: string|null, message: string, agent_name?: string|null }} payload
- * @param {{ onToken, onToolCall, onToolResult, onDone, onError }} handlers
+ * @param {{ session_id: string|null, message: string, agent_name?: string|null, upload_dir?: string|null }} payload
+ * @param {{ onToken, onToolCall, onToolResult, onFile, onDone, onError }} handlers
  * @returns { AbortController }
  */
 export function streamChat(payload, handlers = {}) {
@@ -76,11 +76,15 @@ function dispatch({ event, payload }, handlers) {
     case 'tool_result':
       handlers.onToolResult?.(payload)
       break
+    case 'file':
+      // Excel 等结果文件的下载事件:{ url, filename, mime, size_bytes }
+      handlers.onFile?.(payload)
+      break
     case 'done':
       handlers.onDone?.(payload)
       break
     case 'error':
-      handlers.onError?.(new Error(payload.content || 'stream error'))
+      handlers.onError?.(new Error(payload.content || payload.message || 'stream error'))
       break
     default:
       handlers.onToken?.(payload.content ?? '')

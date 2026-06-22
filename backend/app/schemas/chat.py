@@ -9,3 +9,4 @@ class ChatRequest(BaseModel):
     session_id: str | None = None
     message: str = Field(..., min_length=1)
     agent_name: str | None = None
+    upload_dir: str | None = None  # 上传后携带,让 Supervisor 知道文件路径
