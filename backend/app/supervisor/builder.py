@@ -34,6 +34,10 @@ def _build_agent() -> Any:
     from skills import load_skills
     from subagents import ALL_SUBAGENTS
 
+    # 触发工具注册(@tool 装饰器在 import 时执行;subagents 在 import 时调
+    # get_tools([...]),所以注册必须在 ALL_SUBAGENTS 构造前完成)
+    from tools import excel_pipeline  # noqa: F401
+
     skills = load_skills("skills")
     logger.info(
         "Loaded %d subagents, %d skills, %d middlewares",
