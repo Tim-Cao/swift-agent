@@ -15,6 +15,8 @@ v5 改动:
 from __future__ import annotations
 
 import logging
+import re
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 from langchain_core.messages import HumanMessage
@@ -46,6 +48,7 @@ async def stream_chat(
     db: AsyncSession,
     session_id: str,
     user_message: str,
+    upload_dir: str | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """流式生成前端 SSE 契约事件(后由 chat.py 渲染为 SSE 行)。
 
@@ -53,10 +56,19 @@ async def stream_chat(
       - {"event": "token",      "data": {"content": "<incr>"}}
       - {"event": "tool_call",  "data": {"name": "...", "input": {...}}}
       - {"event": "tool_result","data": {"name": "...", "output": "..."}}
+      - {"event": "file",       "data": {"url": "...", "filename": "...", "mime": "..."}}
       - {"event": "done",       "data": {"session_id": "..."}}
       - {"event": "error",      "data": {"message": "..."}}
+
+    upload_dir: 若前端附带(/api/uploads 返回的 upload_dir),会作为
+      [UPLOAD_DIR:...] 前缀加到 message 里,让 supervisor 识别为 Excel 流水线。
     """
-    # 1. 业务库持久化用户消息 + 触发重命名(checkpointer 不依赖)
+    # 0. 若有 upload_dir,加 [UPLOAD_DIR:...] 前缀
+    llm_message = user_message
+    if upload_dir and "[UPLOAD_DIR:" not in user_message:
+        llm_message = f"[UPLOAD_DIR:{upload_dir}] {user_message}"
+
+    # 1. 业务库持久化用户消息 + 触发重命名(用原始 user_message,不带前缀)
     await repo.append_message(db, session_id=session_id, role="user", content=user_message)
     await rename_if_first_user_message(db, session_id, user_message)
     await db.commit()
@@ -66,9 +78,10 @@ async def stream_chat(
     #    DeltaChannel._messages_delta_reducer 按 ID 去重合并。
     agent = get_supervisor()
     config = make_thread_config(session_id)
-    delta_input = {"messages": [HumanMessage(content=user_message)]}
+    delta_input = {"messages": [HumanMessage(content=llm_message)]}
 
     full_text_parts: list[str] = []
+    file_emitted = False
     try:
         async for raw in agent.astream_events(
             delta_input,
@@ -79,6 +92,16 @@ async def stream_chat(
             if mapped is None:
                 continue
             _collect_text(mapped, full_text_parts)
+            # 检测 tool_result 里出现 .xlsx 路径 → 发 file 事件(只发一次)
+            if (
+                not file_emitted
+                and mapped.get("event") == "tool_result"
+                and mapped.get("data", {}).get("name") == "write_excel"
+            ):
+                file_evt = _detect_file_event(mapped["data"].get("output"), session_id)
+                if file_evt:
+                    yield file_evt
+                    file_emitted = True
             yield mapped
     except Exception as e:  # noqa: BLE001
         logger.exception("stream failed")
@@ -151,3 +174,31 @@ def _collect_text(event: dict[str, Any], sink: list[str]) -> None:
     content = (event.get("data") or {}).get("content")
     if isinstance(content, str) and content:
         sink.append(content)
+
+
+# .xlsx 路径匹配(/tmp/swift-agent/<sid>/xxx.xlsx)
+_XLSX_RE = re.compile(r"(/tmp/swift-agent/[\w\-]+/[^\s\"']+\.xlsx)")
+
+
+def _detect_file_event(output: Any, session_id: str) -> dict | None:
+    """从 write_excel tool_result.output 里提取 xlsx 路径,生成 file 事件。"""
+    if output is None:
+        return None
+    text = str(output)
+    m = _XLSX_RE.search(text)
+    if not m:
+        return None
+    xlsx_path = m.group(1)
+    p = Path(xlsx_path)
+    if not p.exists() or not p.is_file():
+        return None
+    size = p.stat().st_size
+    return {
+        "event": "file",
+        "data": {
+            "url": f"/api/downloads/{session_id}/{p.name}",
+            "filename": p.name,
+            "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "size_bytes": size,
+        },
+    }
