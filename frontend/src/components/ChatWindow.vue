@@ -63,7 +63,7 @@ function isPending(index) {
 }
 
 async function onSend(payload) {
-  // payload: { message, upload_dir, attachment_session_id }
+  // payload: { message, upload_dir }
   if (!props.sessionId) {
     emit('appendMessage', { role: 'system', content: '请先在左侧选择或新建会话' })
     return
@@ -76,16 +76,9 @@ async function onSend(payload) {
   }
   emit('appendMessage', currentAssistant)
 
-  // 若上传产生了新的 session_id,优先用它(确保 upload_dir 路径能查到)
-  // 否则沿用 ChatWindow 的当前 session_id
-  const chatSid =
-    payload.attachment_session_id && payload.attachment_session_id !== props.sessionId
-      ? payload.attachment_session_id
-      : props.sessionId
-
   await send(
     {
-      session_id: chatSid,
+      session_id: props.sessionId,
       message: payload.message,
       upload_dir: payload.upload_dir || null,
     },
