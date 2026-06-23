@@ -14,20 +14,25 @@
     </div>
 
     <div class="input-row">
-      <!-- el-upload 拖拽上传 zip(自动上传) -->
+      <!-- el-upload 触发器:用一个 el-button 做"上传 zip"入口,
+           仍支持点击选择文件(默认 slot)。el-button 比 el-icon 块更醒目,
+           也更符合用户习惯。 -->
       <el-upload
         :auto-upload="true"
         :show-file-list="false"
         :http-request="customUpload"
         :before-upload="beforeUpload"
         accept=".zip"
-        drag
-        class="zip-uploader"
       >
-        <div class="upload-trigger">
-          <el-icon class="upload-icon"><UploadFilled /></el-icon>
-          <div class="upload-text">{{ uploading ? '上传中…' : '拖拽 zip 或点击' }}</div>
-        </div>
+        <el-button
+          :loading="uploading"
+          :disabled="disabled || uploading"
+          type="primary"
+          plain
+        >
+          <el-icon class="btn-icon"><UploadFilled /></el-icon>
+          <span>{{ uploading ? '上传中…' : '上传 zip' }}</span>
+        </el-button>
       </el-upload>
 
       <el-input
@@ -156,30 +161,9 @@ defineExpose({ clearAttachment })
 .zip-uploader {
   flex: 0 0 auto;
 }
-.upload-trigger {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 10px;
-  width: 100px;
-  height: 64px;
-  border: 1px dashed #c0c4cc;
-  border-radius: 6px;
-  color: #606266;
-  cursor: pointer;
-}
-.upload-trigger:hover {
-  border-color: #409eff;
-  color: #409eff;
-}
-.upload-icon {
-  font-size: 20px;
-  margin-bottom: 2px;
-}
-.upload-text {
-  font-size: 12px;
-  line-height: 1.2;
+.btn-icon {
+  margin-right: 4px;
+  font-size: 14px;
 }
 .attachment-chip {
   display: inline-flex;

@@ -134,8 +134,20 @@ def _map_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     if name == "on_chat_model_stream":
         chunk = data.get("chunk")
         content = getattr(chunk, "content", None)
+        # 兼容两种 AIMessageChunk.content 形态:
+        #   - str: 直接当 token 发
+        #   - list[dict]:OpenAI 工具调用增量格式,只把 type=='text' 的段拼成 token
+        #     (type=='tool_use' / 'tool_call' 等由 on_tool_* 事件负责,这里不重复)
         if isinstance(content, str) and content:
             return {"event": "token", "data": {"content": content}}
+        if isinstance(content, list) and content:
+            text = "".join(
+                seg.get("text", "")
+                for seg in content
+                if isinstance(seg, dict) and seg.get("type") == "text"
+            )
+            if text:
+                return {"event": "token", "data": {"content": text}}
         return None
 
     if name == "on_tool_start":
