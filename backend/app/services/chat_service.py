@@ -125,8 +125,10 @@ async def stream_chat(
 def _map_event(raw: dict[str, Any]) -> dict[str, Any] | None:
     """把 deepagents 原生 astream_events(v2) 事件映射为前端 SSE 契约。
 
-    不需要的事件(on_chain_start / on_chain_end / on_chain_stream / metadata /
-    on_tool_start 的纯中间件内部事件等)返回 None,调用方直接 continue。
+    v8.4 简化:只对外暴露 token / file / done / error 四类事件。
+    - on_tool_start / on_tool_end(对应 tool_call / tool_result)静默掉——
+      前端用不到,且 xlsx 路径在 _detect_file_event 里另外检测后再发 file
+    - on_chain_start / on_chain_end / on_chain_stream / metadata 不下发
     """
     name = raw.get("event")
     data = raw.get("data") or {}
@@ -137,7 +139,6 @@ def _map_event(raw: dict[str, Any]) -> dict[str, Any] | None:
         # 兼容两种 AIMessageChunk.content 形态:
         #   - str: 直接当 token 发
         #   - list[dict]:OpenAI 工具调用增量格式,只把 type=='text' 的段拼成 token
-        #     (type=='tool_use' / 'tool_call' 等由 on_tool_* 事件负责,这里不重复)
         if isinstance(content, str) and content:
             return {"event": "token", "data": {"content": content}}
         if isinstance(content, list) and content:
@@ -150,32 +151,10 @@ def _map_event(raw: dict[str, Any]) -> dict[str, Any] | None:
                 return {"event": "token", "data": {"content": text}}
         return None
 
-    if name == "on_tool_start":
-        return {
-            "event": "tool_call",
-            "data": {
-                "name": data.get("name"),
-                "input": data.get("input"),
-            },
-        }
-
-    if name == "on_tool_end":
-        # on_tool_end.output 在不同版本里可能是 ToolMessage / str / dict,
-        # 统一尽量序列化为字符串,避免 Pydantic Message 透传到 SSE。
-        output = data.get("output")
-        if hasattr(output, "content"):
-            output_repr = getattr(output, "content", output)
-        else:
-            output_repr = output
-        return {
-            "event": "tool_result",
-            "data": {
-                "name": data.get("name"),
-                "output": output_repr,
-            },
-        }
-
-    # on_chain_start / on_chain_end / on_chain_stream / metadata 等:不下发
+    # on_tool_start / on_tool_end:不再下发 tool_call / tool_result 事件。
+    # 真正给前端用的"工具有结果了"信号,统一在 stream_chat 里通过
+    # _detect_file_event 扫描 ToolMessage.content 里的 xlsx 路径,生成
+    # file 事件。LLM 内部调工具的中间过程对前端用户无意义,会刷屏。
     return None
 
 

@@ -79,10 +79,20 @@ def test_map_stream_unrelated_event_returns_none():
     assert _map_event({"event": "on_chain_end", "data": {}}) is None
 
 
-def test_map_tool_start_event():
+def test_map_tool_start_event_silenced():
+    """v8.4:on_tool_start 不再产生 tool_call 事件(前端用不到且会刷屏)。"""
     raw = {"event": "on_tool_start", "data": {"name": "write_excel", "input": {"x": 1}}}
-    out = _map_event(raw)
-    assert out == {
-        "event": "tool_call",
-        "data": {"name": "write_excel", "input": {"x": 1}},
+    assert _map_event(raw) is None
+
+
+def test_map_tool_end_event_silenced():
+    """v8.4:on_tool_end 不再产生 tool_result 事件(xlsx 路径检测在
+    stream_chat 的 _detect_file_event 里另走 file 事件通道)。"""
+    raw = {
+        "event": "on_tool_end",
+        "data": {
+            "name": "write_excel",
+            "output": "saved /tmp/swift-agent/x/result.xlsx",
+        },
     }
+    assert _map_event(raw) is None
