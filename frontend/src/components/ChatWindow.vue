@@ -3,12 +3,12 @@
     <div class="messages" ref="scrollRef">
       <div v-if="!localMessages.length" class="empty">开始一次对话吧 👋</div>
       <MessageBubble
-        v-for="(m, i) in localMessages"
-        :key="i"
+        v-for="m in localMessages"
+        :key="m.id"
         :role="m.role"
         :content="m.content"
         :attachments="m.attachments"
-        :pending="isPending(i)"
+        :pending="isPending(m)"
       />
     </div>
     <InputBar
@@ -37,20 +37,26 @@ const inputBarRef = ref(null)
 const { isStreaming, send } = useChat()
 
 /**
- * 用本地 reactive ref 镜像 props.messages,流式 token 直接 mutate
- * 本地副本(响应式),不再依赖 store 的方法是否齐全——
- * 这样即便 HMR 缓存了旧 store,流式显示也不会因方法缺失而炸。
+ * 流式消息列表:每个消息有稳定 id,流式期间用 immutable replace
+ * (即"用新对象替换原对象")驱动 Vue 重渲染,避免直接 mutate reactive
+ * 对象的属性时 HMR / 跨组件边界触发不到更新的边界问题。
  */
-const localMessages = ref([...props.messages])
+let _idSeq = 0
+function nextId() {
+  _idSeq += 1
+  return `m_${Date.now()}_${_idSeq}`
+}
 
+const localMessages = ref([])
+
+// 父组件切会话 / 加载历史时整体替换
 watch(
   () => props.messages,
   (val) => {
-    // 父组件切换会话/加载历史时,整体替换本地副本
-    localMessages.value = [...val]
+    localMessages.value = (val || []).map((m) => ({ ...m, id: m.id || nextId() }))
     scrollToBottom()
   },
-  { deep: true },
+  { immediate: true, deep: true },
 )
 
 function scrollToBottom() {
@@ -71,33 +77,39 @@ watch(
   () => scrollToBottom(),
 )
 
-function isPending(index) {
-  const m = localMessages.value[index]
+function isPending(m) {
   if (!m || m.role !== 'assistant') return false
-  if (index !== localMessages.value.length - 1) return false
+  if (m !== localMessages.value[localMessages.value.length - 1]) return false
   if (!isStreaming.value) return false
   if (m.content && m.content.length > 0) return false
   return true
 }
 
 function pushLocal(msg) {
-  localMessages.value.push(msg)
+  localMessages.value = [...localMessages.value, { id: nextId(), ...msg }]
 }
 
 function appendTokenLocal(text) {
   if (!text) return
-  const last = localMessages.value[localMessages.value.length - 1]
-  if (last && last.role === 'assistant') {
-    last.content = (last.content || '') + text
+  const arr = localMessages.value
+  const last = arr[arr.length - 1]
+  if (!last || last.role !== 'assistant') return
+  // immutable replace:用全新对象替换最后一条,V diff 必触发 MessageBubble 重渲染
+  const updated = {
+    ...last,
+    content: (last.content || '') + text,
   }
+  localMessages.value = [...arr.slice(0, -1), updated]
+  // 调试用:浏览器硬刷后可在控制台看到 "token: hi" 多次,说明流式回调被触发
+  console.debug('[chat] token', text.length, '→ total', updated.content.length)
 }
 
 function attachFileLocal(fileMeta) {
-  const last = localMessages.value[localMessages.value.length - 1]
-  if (last && last.role === 'assistant') {
-    if (!last.attachments) last.attachments = []
-    last.attachments.push(fileMeta)
-  }
+  const arr = localMessages.value
+  const last = arr[arr.length - 1]
+  if (!last || last.role !== 'assistant') return
+  const attachments = [...(last.attachments || []), fileMeta]
+  localMessages.value = [...arr.slice(0, -1), { ...last, attachments }]
 }
 
 async function onSend(payload) {
@@ -105,13 +117,11 @@ async function onSend(payload) {
     emit('appendMessage', { role: 'system', content: '请先在左侧选择或新建会话' })
     return
   }
-  // 本地响应式 ref 立刻拿到用户消息 + 占位 assistant 消息,
-  // 流式 token 直接 mutate 这个本地 ref——HMR / store 方法缺失不影响显示
+  // 立刻 push 用户消息 + 占位 assistant
   pushLocal({ role: 'user', content: payload.message })
   pushLocal({ role: 'assistant', content: '', attachments: [] })
 
-  // 同步告诉父组件持久化用户消息(后端流结束后会自己 append 完整 assistant
-  // 消息,这里只 emit user 避免重复)
+  // 同步告诉父组件持久化用户消息
   emit('appendMessage', { role: 'user', content: payload.message })
 
   await send(
