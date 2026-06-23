@@ -25,6 +25,7 @@ import { ref, watch, nextTick } from 'vue'
 import MessageBubble from './MessageBubble.vue'
 import InputBar from './InputBar.vue'
 import { useChat } from '../stores/chat'
+import { useSessionStore } from '../stores/session'
 
 const props = defineProps({
   messages: { type: Array, required: true },
@@ -35,8 +36,7 @@ const emit = defineEmits(['appendMessage', 'updateSessionId'])
 const scrollRef = ref(null)
 const inputBarRef = ref(null)
 const { isStreaming, send } = useChat()
-
-let currentAssistant = null
+const store = useSessionStore()
 
 function scrollToBottom() {
   nextTick(() => {
@@ -46,6 +46,14 @@ function scrollToBottom() {
 
 watch(
   () => props.messages.length,
+  () => scrollToBottom(),
+)
+// 流式期间,content 也会持续增长,需要跟着滚到底
+watch(
+  () => {
+    const last = props.messages[props.messages.length - 1]
+    return last && last.role === 'assistant' ? last.content : null
+  },
   () => scrollToBottom(),
 )
 
@@ -68,13 +76,9 @@ async function onSend(payload) {
     emit('appendMessage', { role: 'system', content: '请先在左侧选择或新建会话' })
     return
   }
-  emit('appendMessage', { role: 'user', content: payload.message })
-  currentAssistant = {
-    role: 'assistant',
-    content: '',
-    attachments: [],
-  }
-  emit('appendMessage', currentAssistant)
+  // 用户消息 + 占位 assistant 消息都进 store(messages 是响应式 ref)
+  store.pushMessage({ role: 'user', content: payload.message })
+  store.pushMessage({ role: 'assistant', content: '', attachments: [] })
 
   await send(
     {
@@ -83,27 +87,20 @@ async function onSend(payload) {
       upload_dir: payload.upload_dir || null,
     },
     {
-      onToken: (t) => {
-        if (currentAssistant) currentAssistant.content += t
-      },
+      // 直接调 store 的响应式 action:每次 token 到来更新最后一条 assistant.content,
+      // Vue 响应式系统自动触发 MessageBubble 重新渲染——字真的能"流式吐出来"。
+      onToken: (t) => store.appendToken(t),
       onFile: (fileMeta) => {
-        // 后端在 ExcelWriterAgent 完成时推送的 file 事件
-        if (currentAssistant) {
-          if (!currentAssistant.attachments) currentAssistant.attachments = []
-          currentAssistant.attachments.push({
-            url: fileMeta.url,
-            filename: fileMeta.filename,
-            mime: fileMeta.mime,
-            size_bytes: fileMeta.size_bytes,
-          })
-        }
+        store.attachFile({
+          url: fileMeta.url,
+          filename: fileMeta.filename,
+          mime: fileMeta.mime,
+          size_bytes: fileMeta.size_bytes,
+        })
       },
-      onDone: () => {
-        currentAssistant = null
-      },
+      onDone: () => {},
       onError: (e) => {
-        if (currentAssistant) currentAssistant.content += `\n\n[error] ${e.message}`
-        currentAssistant = null
+        store.appendToken(`\n\n[error] ${e.message}`)
       },
     },
   )

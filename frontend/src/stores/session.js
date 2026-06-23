@@ -54,6 +54,27 @@ export const useSessionStore = defineStore('session', () => {
     messages.value.push(msg)
   }
 
+  /**
+   * 流式追加:每次 token 到达时,更新最后一条 assistant 消息的 content
+   * (以及必要时 append attachments)。直接操作 messages.value[-1] 会触发
+   * 响应式,带动 MessageBubble 重新渲染。
+   */
+  function appendToken(text) {
+    if (!text) return
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant') {
+      last.content = (last.content || '') + text
+    }
+  }
+
+  function attachFile(fileMeta) {
+    const last = messages.value[messages.value.length - 1]
+    if (last && last.role === 'assistant') {
+      if (!last.attachments) last.attachments = []
+      last.attachments.push(fileMeta)
+    }
+  }
+
   return {
     sessions,
     currentId,
@@ -65,5 +86,7 @@ export const useSessionStore = defineStore('session', () => {
     removeSession,
     rename,
     pushMessage,
+    appendToken,
+    attachFile,
   }
 })
