@@ -1,9 +1,9 @@
 <template>
   <div class="chat-window">
     <div class="messages" ref="scrollRef">
-      <div v-if="!messages.length" class="empty">开始一次对话吧 👋</div>
+      <div v-if="!localMessages.length" class="empty">开始一次对话吧 👋</div>
       <MessageBubble
-        v-for="(m, i) in messages"
+        v-for="(m, i) in localMessages"
         :key="i"
         :role="m.role"
         :content="m.content"
@@ -25,18 +25,33 @@ import { ref, watch, nextTick } from 'vue'
 import MessageBubble from './MessageBubble.vue'
 import InputBar from './InputBar.vue'
 import { useChat } from '../stores/chat'
-import { useSessionStore } from '../stores/session'
 
 const props = defineProps({
   messages: { type: Array, required: true },
   sessionId: { type: String, default: null },
 })
-const emit = defineEmits(['appendMessage', 'updateSessionId'])
+const emit = defineEmits(['appendMessage'])
 
 const scrollRef = ref(null)
 const inputBarRef = ref(null)
 const { isStreaming, send } = useChat()
-const store = useSessionStore()
+
+/**
+ * 用本地 reactive ref 镜像 props.messages,流式 token 直接 mutate
+ * 本地副本(响应式),不再依赖 store 的方法是否齐全——
+ * 这样即便 HMR 缓存了旧 store,流式显示也不会因方法缺失而炸。
+ */
+const localMessages = ref([...props.messages])
+
+watch(
+  () => props.messages,
+  (val) => {
+    // 父组件切换会话/加载历史时,整体替换本地副本
+    localMessages.value = [...val]
+    scrollToBottom()
+  },
+  { deep: true },
+)
 
 function scrollToBottom() {
   nextTick(() => {
@@ -45,40 +60,59 @@ function scrollToBottom() {
 }
 
 watch(
-  () => props.messages.length,
+  () => localMessages.value.length,
   () => scrollToBottom(),
 )
-// 流式期间,content 也会持续增长,需要跟着滚到底
 watch(
   () => {
-    const last = props.messages[props.messages.length - 1]
+    const last = localMessages.value[localMessages.value.length - 1]
     return last && last.role === 'assistant' ? last.content : null
   },
   () => scrollToBottom(),
 )
 
-/**
- * 是否显示三点等待动画:仅"最后一条 assistant 消息 + 流式进行中 + 尚未收到首个 token"为 true。
- * 首个 token 到达后 m.content 不再为空,pending 自动转 false,动画被 MarkdownView 替换。
- */
 function isPending(index) {
-  const m = props.messages[index]
+  const m = localMessages.value[index]
   if (!m || m.role !== 'assistant') return false
-  if (index !== props.messages.length - 1) return false
+  if (index !== localMessages.value.length - 1) return false
   if (!isStreaming.value) return false
   if (m.content && m.content.length > 0) return false
   return true
 }
 
+function pushLocal(msg) {
+  localMessages.value.push(msg)
+}
+
+function appendTokenLocal(text) {
+  if (!text) return
+  const last = localMessages.value[localMessages.value.length - 1]
+  if (last && last.role === 'assistant') {
+    last.content = (last.content || '') + text
+  }
+}
+
+function attachFileLocal(fileMeta) {
+  const last = localMessages.value[localMessages.value.length - 1]
+  if (last && last.role === 'assistant') {
+    if (!last.attachments) last.attachments = []
+    last.attachments.push(fileMeta)
+  }
+}
+
 async function onSend(payload) {
-  // payload: { message, upload_dir }
   if (!props.sessionId) {
     emit('appendMessage', { role: 'system', content: '请先在左侧选择或新建会话' })
     return
   }
-  // 用户消息 + 占位 assistant 消息都进 store(messages 是响应式 ref)
-  store.pushMessage({ role: 'user', content: payload.message })
-  store.pushMessage({ role: 'assistant', content: '', attachments: [] })
+  // 本地响应式 ref 立刻拿到用户消息 + 占位 assistant 消息,
+  // 流式 token 直接 mutate 这个本地 ref——HMR / store 方法缺失不影响显示
+  pushLocal({ role: 'user', content: payload.message })
+  pushLocal({ role: 'assistant', content: '', attachments: [] })
+
+  // 同步告诉父组件持久化用户消息(后端流结束后会自己 append 完整 assistant
+  // 消息,这里只 emit user 避免重复)
+  emit('appendMessage', { role: 'user', content: payload.message })
 
   await send(
     {
@@ -87,20 +121,12 @@ async function onSend(payload) {
       upload_dir: payload.upload_dir || null,
     },
     {
-      // 直接调 store 的响应式 action:每次 token 到来更新最后一条 assistant.content,
-      // Vue 响应式系统自动触发 MessageBubble 重新渲染——字真的能"流式吐出来"。
-      onToken: (t) => store.appendToken(t),
-      onFile: (fileMeta) => {
-        store.attachFile({
-          url: fileMeta.url,
-          filename: fileMeta.filename,
-          mime: fileMeta.mime,
-          size_bytes: fileMeta.size_bytes,
-        })
-      },
+      onToken: (t) => appendTokenLocal(t),
+      onFile: (fileMeta) => attachFileLocal(fileMeta),
       onDone: () => {},
       onError: (e) => {
-        store.appendToken(`\n\n[error] ${e.message}`)
+        console.error('[chat stream error]', e)
+        appendTokenLocal(`\n\n[error] ${e?.message || e}`)
       },
     },
   )
