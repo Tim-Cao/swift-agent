@@ -8,8 +8,9 @@
 
 `swift-agent` 是一个本地优先(stateful multi-turn)的多智能体聊天工作台:
 
-- **后端**:FastAPI + SQLAlchemy 2 异步 + SQLite,LangGraph `Pregel` 跑 deepagents 的 supervisor,流式 SSE 产出 token / tool_call / tool_result / done / error 五类事件;
+- **后端**:FastAPI + SQLAlchemy 2 异步 + SQLite,LangGraph `Pregel` 跑 deepagents 的 supervisor,流式 SSE 产出 token / tool_call / tool_result / file / done / error 六类事件;
 - **前端**:Vue 3 + Pinia + Vite,Element Plus UI,marked + highlight.js + DOMPurify 渲染 markdown;
+- **Excel 处理流水线**:用户上传自然语言指令 + zip(多 CSV),Supervisor 串行调度 Intake → RuleParser → DataProcessing → ExcelWriter 四个 subagent,自动产出规范美化 Excel;
 - **持久化**:`InMemorySaver` 持有图 state(多轮对话),`InMemoryStore` 给跨 thread 长期记忆;业务库(SQLite `sessions` / `messages`)独立承担审计与展示;
 - **扩展点**:`backend/{tools, skills, middlewares, subagents}/` 四个目录,业务新增能力无需改动 `app/`。
 
@@ -20,10 +21,10 @@
 ```
 swift-agent/
 ├── backend/                       # 【后端】FastAPI 应用(独立 uv 项目)
-│   ├── tools/                     # 工具注册中心(空骨架,业务按需 register)
+│   ├── tools/                     # 工具注册中心(Excel pipeline:unzip / inspect / execute_pandas / write_excel)
 │   ├── skills/                    # 技能目录(空骨架,扫描 */SKILL.md)
 │   ├── middlewares/               # 中间件(空骨架,ALL_MIDDLEWARES 列表)
-│   ├── subagents/                 # 子 Agent(空骨架,ALL_SUBAGENTS 列表)
+│   ├── subagents/                 # 子 Agent(Excel pipeline:Intake / RuleParser / DataProcessing / ExcelWriter)
 │   ├── app/
 │   │   ├── core/                  # 配置(Settings) / 生命周期
 │   │   │   └── config.py          # Pydantic Settings + @lru_cache
@@ -35,6 +36,8 @@ swift-agent/
 │   │   │       ├── sessions.py    # /api/sessions CRUD
 │   │   │       ├── messages.py    # /api/sessions/{id}/messages
 │   │   │       └── chat.py        # /api/chat/stream (SSE)
+│   │   │       ├── uploads.py     # POST /api/uploads (zip → 解压)
+│   │   │       └── downloads.py   # GET  /api/downloads/<sid>/<name>
 │   │   ├── db/                    # SQLAlchemy 异步 ORM + repository
 │   │   ├── schemas/               # Pydantic 数据模型
 │   │   ├── services/              # 业务逻辑(chat_service / session_service)
@@ -43,7 +46,7 @@ swift-agent/
 │   │       ├── checkpointer.py    # PERSISTENCE_CHECKPOINTER_BACKEND 工厂
 │   │       ├── store.py           # PERSISTENCE_STORE_BACKEND 工厂
 │   │       └── builder.py         # create_deep_agent 单例装配
-│   ├── tests/                     # pytest(20 通过 + 1 v1 既有失败)
+│   ├── tests/                     # pytest(覆盖 subagents / tools / skills / SSE / uploads / e2e)
 │   ├── data/                      # SQLite 数据文件(.gitkeep)
 │   ├── .env.example               # 配置模板
 │   ├── pyproject.toml
@@ -101,8 +104,45 @@ Vite 已配置 `/api` 代理到 `http://localhost:8000`,默认 `host: '0.0.0.0'`
         ├─ event: token      data: {"content":"..."}
         ├─ event: tool_call  data: {"name":"...","input":{...}}   (如触发)
         ├─ event: tool_result data: {"name":"...","output":"..."}
+        ├─ event: file       data: {"url": "...", "filename": "...", ...}  (如生成 Excel)
         └─ event: done       data: {"session_id":"..."}
 ```
+
+---
+
+## Excel 处理流水线
+
+输入:**自然语言指令 + zip 压缩包(多 CSV)**
+输出:规范美化的 `.xlsx` 结果文件(前端弹下载卡片)
+
+```
+[Browser]   拖拽 zip → InputBar
+   └─ POST /api/uploads  (multipart)  →  { session_id, upload_dir, csv_files, ... }
+[Browser]   输入指令 + 点发送
+   └─ POST /api/chat/stream  body={ message, upload_dir }
+        Supervisor LLM 串行调度 4 个 subagent:
+          ① IntakeAgent          unzip + inspect_csv
+          ② RuleParserAgent      NL → pandas 代码
+          ③ DataProcessingAgent  execute_pandas_code(沙箱) → result.csv
+          ④ ExcelWriterAgent     write_excel → /tmp/swift-agent/<sid>/result.xlsx
+        SSE 流末尾追加 file 事件:{ url, filename, mime, size_bytes }
+[Browser]   MessageBubble 渲染附件下载卡片 → window.location.href 触发下载
+```
+
+### 4 个 subagent
+
+| Agent | 职责 | 工具 |
+|---|---|---|
+| **IntakeAgent** | 解压 zip + 解析所有 CSV 结构(字段 / 类型 / 缺失值 / 样例) | `unzip_archive`, `inspect_csv` |
+| **RuleParserAgent** | 自然语言指令 → 可执行 pandas Python 代码 | `execute_pandas_code` |
+| **DataProcessingAgent** | 执行规则代码,产出中间 result.csv | `execute_pandas_code` |
+| **ExcelWriterAgent** | 把 result.csv 写成规范美化 Excel | `write_excel` |
+
+`execute_pandas_code` 沙箱:AST 白名单(拒绝 `import` / `open` / `exec` / dunder 访问)+ 受限 `exec`(`SAFE_BUILTINS` + `pd` + 已加载的 DataFrame),LDC 生成的代码不能直接被用户输入污染。
+
+### 串行调度
+
+deepagents 0.6.11 不提供 subagent 间显式编排。Supervisor 由 `task` 工具 + LLM 自调度,**串行顺序由 `supervisor_system_prompt` 写明**,失败 3 次后把错误整理成 Markdown 表格告诉用户。
 
 ---
 
@@ -172,6 +212,7 @@ data: <json>
 | `token` | `{"content": "<incremental text>"}` | deepagents `on_chat_model_stream` chunk |
 | `tool_call` | `{"name": "...", "input": {...}}` | deepagents `on_tool_start` |
 | `tool_result` | `{"name": "...", "output": "..."}` | deepagents `on_tool_end`(output 兼容 ToolMessage / str / dict) |
+| `file` | `{"url": "...", "filename": "...", "mime": "...", "size_bytes": N}` | 当 `write_excel` tool_result 输出 `.xlsx` 路径时,`chat_service._detect_file_event` 解析后下发,前端弹下载卡 |
 | `done` | `{"session_id": "..."}` | 流结束 |
 | `error` | `{"message": "..."}` | 流异常 |
 
@@ -262,10 +303,14 @@ ALL_MIDDLEWARES.append(MyMiddleware())
 | `LLM_` | ChatOpenAI 模板 | `api_key` / `base_url` / `model` / `temperature` |
 | `DB_` | 数据库 | `url` / `sql_echo` |
 | `SERVER_` | HTTP 服务 | `host` / `port` / `cors_origins` |
-| `APP_` | 应用聚合 | `app_name` / `supervisor_system_prompt` |
+| `APP_` | 应用聚合 | `app_name` / `supervisor_system_prompt` / `supervisor_debug` |
 | `PERSISTENCE_` | LangGraph 持久化后端 | `checkpointer_backend` / `store_backend` / `checkpoint_db_url` / `store_db_url` |
 
 `PERSISTENCE_*` 字段取值由 Pydantic `Literal["memory", "postgres"]` 约束;`memory` 是当前唯一完整实现,`postgres` 分支保留 `NotImplementedError`(未来接入 `langgraph-checkpoint-postgres` / `langgraph-store-postgres`)。
+
+### `APP_SUPERVISOR_DEBUG`
+
+`create_deep_agent(debug=)` 开关:`true` 时 LangGraph 打印每个 node / tool_call / state 转换的详细 trace,便于排查 subagent 调度;生产可设 `false` 减少日志噪音。默认 `true`。
 
 ---
 
@@ -276,13 +321,7 @@ cd backend
 uv run pytest -q
 ```
 
-当前 20 通过 / 1 失败:
-
-- ✅ `test_chat_sse` (3) — schema / supervisor config
-- ✅ `test_persistence_settings` (5) — Literal 取值校验 + env override
-- ✅ `test_middlewares` / `test_skills` / `test_subagents` / `test_tools` — 扩展注册
-- ✅ `test_sessions_crud` — 部分用例
-- ❌ `test_sessions_crud::test_rename_first_user_message` — v1 既有 bug,非本轮范围
+覆盖:`test_chat_sse` / `test_persistence_settings` / `test_middlewares` / `test_skills` / `test_subagents`(原 + v7)/ `test_tools`(原 + v7)/ `test_sessions_crud` / `test_uploads` / `test_excel_end_to_end`。
 
 ---
 

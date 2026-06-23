@@ -55,6 +55,8 @@ def _build_agent() -> Any:
         # state_schema / context_schema 均不传(默认 DeepAgentState + ContextT=None)
         checkpointer=get_checkpointer(),
         store=get_store(),
+        # 调试开关:.env SUPERVISOR_DEBUG 控制;默认 true(开启 LangGraph 详细 trace)
+        debug=settings.supervisor_debug,
     )
 
 
