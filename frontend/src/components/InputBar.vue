@@ -130,9 +130,6 @@ function submit() {
   emit('send', {
     message: t,
     upload_dir: attachment.value?.upload_dir || null,
-    // 上传后产生的 session_id 必须带到 chat,否则后端在另一个 session 找不到 zip。
-    // 没附件时(纯对话)不传,后端会沿用当前 session_id。
-    attachment_session_id: attachment.value?.session_id || null,
   })
   // 发送后清空输入与附件
   text.value = ''

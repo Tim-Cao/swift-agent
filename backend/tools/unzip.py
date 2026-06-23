@@ -12,26 +12,10 @@ from tools import register_tool
 
 @tool
 def unzip_archive(zip_path: str, dest_dir: str) -> dict:
-    """把 zip 压缩包解压到目标目录。
+    """解压 zip 到 dest_dir,返回 {csv_files: [相对路径...], total_count: int}。
 
-    参数(注意顺序,**不要反**):
-      - zip_path:  **压缩包文件的绝对路径**(以 .zip 结尾)
-      - dest_dir:  **解压到的目标目录绝对路径**(会自动 mkdir)
-
-    后端 uploads API 已经把 zip 解压到 /tmp/swift-agent/<sid>/csv/,
-    IntakeAgent 通常不需要再调本工具——除非用户提供的是裸 .zip 路径。
-    本工具自动防 zip slip:任何含 `..` 或跳出 dest_dir 的条目会被跳过。
-    仅 .csv / .CSV 文件列在 csv_files;其它文件保留但不出现在返回里。
-
-    Returns:
-        {
-          "dest_dir": str,        # 解压后的目录(resolve 后)
-          "csv_files": [str],     # 所有 .csv 相对路径(已排序)
-          "total_count": int,     # csv 文件数
-          "skipped_unsafe": [str] # 跳过的路径穿越文件名
-        }
-
-    出错时返回 {"error": "..."}。
+    自动防 zip slip:任何包含 `..` 或绝对路径的条目会被拒绝并跳过。
+    仅提取 .csv / .CSV 文件;其它文件保留但不在返回里列出。
     """
     src = Path(zip_path)
     dst = Path(dest_dir)

@@ -95,17 +95,12 @@ class AppSettings(BaseSettings):
     supervisor_system_prompt: str = (
         "你是 swift-agent 的 Supervisor,中心调度器。你的职责:\n"
         "\n"
-        "1. 接收用户的自然语言指令。消息里如果含 [UPLOAD_DIR:<dir>] 标记,\n"
-        "   说明用户上传了 zip 压缩包;**注意 <dir> 已经是后端 uvicorn 解压\n"
-        "   完的 csv 目录**(后端 POST /api/uploads 已经把 zip 解到这里),\n"
-        "   不是 zip 本身的路径!IntakeAgent 通常不需要再调 unzip_archive,\n"
-        "   直接 inspect 目录里现有的 csv 即可。\n"
+        "1. 接收用户的自然语言指令。消息里如果含 [UPLOAD_DIR:<path>] 标记,\n"
+        "   说明用户上传了 zip 压缩包,应当触发 Excel 处理流水线。\n"
         "\n"
         "2. 若是 Excel 处理需求,严格按以下顺序串行调度子 Agent,\n"
         "   每步必须等待子 Agent 返回结果后才进入下一步:\n"
-        "   ① IntakeAgent          - 解析 [UPLOAD_DIR:<dir>] 里所有 CSV 结构\n"
-        "                              (若目录为空才调 unzip_archive,且\n"
-        "                               zip_path=zip 文件,dest_dir=目标目录,别反)\n"
+        "   ① IntakeAgent          - 解压 zip + 解析所有 CSV 结构\n"
         "   ② RuleParserAgent      - 基于文件结构 + 自然语言指令,生成 pandas 代码\n"
         "   ③ DataProcessingAgent  - 执行代码,产出 result.csv\n"
         "   ④ ExcelWriterAgent     - 写出规范美化 Excel,返回 output_path\n"
@@ -123,9 +118,7 @@ class AppSettings(BaseSettings):
         "禁止:\n"
         "- 跳过任何中间 subagent 直接调后置 subagent;\n"
         "- 同时并行调用多个 subagent(必须串行,等上一个返回);\n"
-        "- 自己直接 import pandas / openpyxl / 写文件(只能通过 subagent);\n"
-        "- 在子 Agent 返回 {\"error\": ...} 时假装它成功 / 幻觉出 fallback\n"
-        "  JSON 文本给用户——必须如实把 error 上报,再决定是否重试或继续。\n"
+        "- 自己直接 import pandas / openpyxl / 写文件(只能通过 subagent)。\n"
     )
 
     llm: LLMSettings = LLMSettings()
