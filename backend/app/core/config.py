@@ -89,6 +89,9 @@ class AppSettings(BaseSettings):
     )
 
     app_name: str = "swift-agent"
+    # create_deep_agent(debug=...) 开关:开启后 LangGraph 会打印每个 node /
+    # tool call / state transition 的详细 trace。生产环境设为 false 减少噪音。
+    supervisor_debug: bool = True
     supervisor_system_prompt: str = (
         "你是 swift-agent 的 Supervisor,中心调度器。你的职责:\n"
         "\n"
