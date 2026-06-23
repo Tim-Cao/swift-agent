@@ -161,6 +161,62 @@ def test_execute_pandas_code_sandbox_rejects_import(csv_dir):
     assert "Import not allowed" in out["error"]
 
 
+def test_execute_pandas_code_allows_pandas_import(csv_dir):
+    """沙箱已预加载 pd,LLM 写 import pandas as pd 应放行(冗余但无害)。"""
+    code = (
+        "import pandas as pd\n"
+        "import numpy as np\n"
+        "RESULT_DF = a.copy()\n"
+    )
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 3
+
+
+def test_execute_pandas_code_allows_stdlib_import(csv_dir):
+    """math / datetime / re / collections / itertools 等 stdlib 可 import。"""
+    code = (
+        "import re\n"
+        "import math\n"
+        "import datetime\n"
+        "RESULT_DF = a.copy()\n"
+    )
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is True, out
+
+
+def test_execute_pandas_code_rejects_requests(csv_dir):
+    """requests / subprocess / sys 等敏感库仍被拒。"""
+    code = "import requests\nRESULT_DF = a\n"
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is False
+    assert "Import not allowed" in out["error"]
+    assert "requests" in out["error"]
+
+
+def test_execute_pandas_code_rejects_from_os(csv_dir):
+    code = "from os import path\nRESULT_DF = a\n"
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is False
+    assert "Import not allowed" in out["error"]
+
+
 def test_execute_pandas_code_sandbox_rejects_open(csv_dir):
     code = "RESULT_DF = open('a.csv')\n"
     out = execute_pandas_code.invoke({
