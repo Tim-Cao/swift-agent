@@ -150,15 +150,21 @@ def test_execute_pandas_code_no_result_df(csv_dir):
     assert "RESULT_DF" in out["error"]
 
 
-def test_execute_pandas_code_sandbox_rejects_import(csv_dir):
-    code = "import os\nRESULT_DF = a\n"
+def test_execute_pandas_code_sandbox_strips_import(csv_dir):
+    """v8 简化:所有 import 一律 strip,业务代码继续运行。
+
+    沙箱 globals 没有 __import__,但也不需要真 import——pd/np/math 等
+    已预加载。LLM 写 `import os` 不会失败,只是被 AST 删掉;后续如果
+    真引用了未注入的 os 才会 NameError,但那属于业务代码问题。
+    """
+    code = "import os\nRESULT_DF = a.copy()\n"
     out = execute_pandas_code.invoke({
         "code": code,
         "csv_dir": str(csv_dir),
         "allowed_files": ["a.csv"],
     })
-    assert out["ok"] is False
-    assert "Import not allowed" in out["error"]
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 3
 
 
 def test_execute_pandas_code_allows_pandas_import(csv_dir):
@@ -193,28 +199,52 @@ def test_execute_pandas_code_allows_stdlib_import(csv_dir):
     assert out["ok"] is True, out
 
 
-def test_execute_pandas_code_rejects_requests(csv_dir):
-    """requests / subprocess / sys 等敏感库仍被拒。"""
-    code = "import requests\nRESULT_DF = a\n"
+def test_execute_pandas_code_allows_requests_import(csv_dir):
+    """v8:requests / subprocess / sys 等敏感 import 也一律 strip,
+    不再被沙箱拒绝。LLM 可以保留自己的代码风格(曾经会因 import requests
+    被拒而不得不改写)。"""
+    code = "import requests\nRESULT_DF = a.copy()\n"
     out = execute_pandas_code.invoke({
         "code": code,
         "csv_dir": str(csv_dir),
         "allowed_files": ["a.csv"],
     })
-    assert out["ok"] is False
-    assert "Import not allowed" in out["error"]
-    assert "requests" in out["error"]
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 3
 
 
-def test_execute_pandas_code_rejects_from_os(csv_dir):
-    code = "from os import path\nRESULT_DF = a\n"
+def test_execute_pandas_code_allows_from_os(csv_dir):
+    """v8:`from os import path` 同样被 strip,业务代码继续运行。"""
+    code = "from os import path\nRESULT_DF = a.copy()\n"
     out = execute_pandas_code.invoke({
         "code": code,
         "csv_dir": str(csv_dir),
         "allowed_files": ["a.csv"],
     })
-    assert out["ok"] is False
-    assert "Import not allowed" in out["error"]
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 3
+
+
+def test_execute_pandas_code_strip_keeps_business_code(csv_dir):
+    """v8 关键场景:LLM 写 `import os; ... pd.read_csv(...)` 不需要再改写,
+    沙箱把 import strip 掉,业务代码继续跑。
+
+    os 被 strip 掉后,业务代码引用 os.path.join 会 NameError——这属于
+    业务代码本身的问题(它依赖了未被注入的命名空间),不属于沙箱拒绝。
+    这里验的是:有 import 时沙箱不阻拦(strip 之后业务代码能不能继续
+    跑靠代码本身)。
+    """
+    code = (
+        "import os\n"
+        "RESULT_DF = a.copy()\n"
+    )
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 3
 
 
 def test_execute_pandas_code_sandbox_rejects_open(csv_dir):
