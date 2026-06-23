@@ -176,8 +176,9 @@ def _collect_text(event: dict[str, Any], sink: list[str]) -> None:
         sink.append(content)
 
 
-# .xlsx 路径匹配(/tmp/swift-agent/<sid>/xxx.xlsx)
-_XLSX_RE = re.compile(r"(/tmp/swift-agent/[\w\-]+/[^\s\"']+\.xlsx)")
+# .xlsx 路径匹配(同时容忍 /tmp 和 /private/tmp;macOS 上 /tmp 是 symlink,
+# resolved 后变 /private/tmp,LLM 写出来的绝对路径会带 /private 前缀)
+_XLSX_RE = re.compile(r"((?:/private)?/tmp/swift-agent/[\w\-]+/[^\s\"']+\.xlsx)")
 
 
 def _detect_file_event(output: Any, session_id: str) -> dict | None:
@@ -196,6 +197,7 @@ def _detect_file_event(output: Any, session_id: str) -> dict | None:
     return {
         "event": "file",
         "data": {
+            # 前端调这个 url → 后端 downloads.py 走 FileResponse 返回 xlsx 流
             "url": f"/api/downloads/{session_id}/{p.name}",
             "filename": p.name,
             "mime": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

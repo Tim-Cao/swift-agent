@@ -321,7 +321,14 @@ cd backend
 uv run pytest -q
 ```
 
-当前 54 个用例全部通过(0 失败),覆盖范围:`test_chat_sse` / `test_persistence_settings` / `test_middlewares` / `test_skills` / `test_subagents`(原 + v7)/ `test_tools`(原 + v7)/ `test_sessions_crud` / `test_uploads` / `test_excel_end_to_end`。
+当前 72 个用例全部通过(0 失败),覆盖范围:`test_chat_sse` / `test_chat_file_event`(v8) / `test_persistence_settings` / `test_middlewares` / `test_skills` / `test_subagents`(原 + v7)/ `test_tools`(原 + v7)/ `test_backend_sandbox`(v8) / `test_sessions_crud` / `test_uploads` / `test_excel_end_to_end`。
+
+### v8 新增
+
+- `test_backend_sandbox.py`(7 用例):`create_deep_agent(backend=FilesystemBackend)` 沙箱,验证 `root_dir=/tmp/swift-agent` / `virtual_mode=True` 阻挡路径穿越;
+- `test_chat_file_event.py`(6 用例):SSE `file` 事件检测,同时容忍 `/tmp` 与 `/private/tmp` 前缀(macOS symlink),拼出 `/api/downloads/<sid>/<filename>`;
+- 沙箱 import 策略简化:所有 import 一律 AST strip(沙箱 globals 已预加载 pd / np / math,LLM 写 `import os` 不再被拒);
+- 前端 `MessageBubble.vue`:`fetch + Blob` 触发下载,带 downloading / done / error 状态反馈。
 
 ---
 
