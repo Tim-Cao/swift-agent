@@ -321,7 +321,7 @@ cd backend
 uv run pytest -q
 ```
 
-覆盖:`test_chat_sse` / `test_persistence_settings` / `test_middlewares` / `test_skills` / `test_subagents`(原 + v7)/ `test_tools`(原 + v7)/ `test_sessions_crud` / `test_uploads` / `test_excel_end_to_end`。
+当前 54 个用例全部通过(0 失败),覆盖范围:`test_chat_sse` / `test_persistence_settings` / `test_middlewares` / `test_skills` / `test_subagents`(原 + v7)/ `test_tools`(原 + v7)/ `test_sessions_crud` / `test_uploads` / `test_excel_end_to_end`。
 
 ---
 
