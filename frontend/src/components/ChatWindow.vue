@@ -17,6 +17,16 @@
       :session-id="sessionId"
       @send="onSend"
     />
+    <!-- 临时调试 overlay:把每个 token 直接拼到屏幕上,绕开所有 Vue 渲染逻辑。
+         硬刷后:看到这里有字 = onToken 被调;看不到 = SSE 解析或回调链断。
+         修好后会移除。 -->
+    <div
+      v-if="debugChunks.length"
+      style="position:fixed;bottom:0;left:0;right:0;max-height:30vh;overflow:auto;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:11px;padding:6px;z-index:9999;white-space:pre-wrap"
+    >
+      <div>debug tokens ({{ debugChunks.length }} chunks, last len {{ debugChunks.at(-1)?.length }}):</div>
+      <div>{{ debugChunks.join('') }}</div>
+    </div>
   </div>
 </template>
 
@@ -48,6 +58,8 @@ function nextId() {
 }
 
 const localMessages = ref([])
+// 临时调试 buffer:记录每个 token,渲染在屏幕底部 overlay
+const debugChunks = ref([])
 
 // 父组件切会话 / 加载历史时整体替换
 watch(
@@ -100,8 +112,9 @@ function appendTokenLocal(text) {
     content: (last.content || '') + text,
   }
   localMessages.value = [...arr.slice(0, -1), updated]
-  // 调试用:浏览器硬刷后可在控制台看到 "token: hi" 多次,说明流式回调被触发
-  console.debug('[chat] token', text.length, '→ total', updated.content.length)
+  // 调试:在屏幕底部 overlay 显示,绕开 console / Vue 渲染
+  debugChunks.value.push(text)
+  console.log('[chat] onToken len', text.length, '→ total', updated.content.length)
 }
 
 function attachFileLocal(fileMeta) {
