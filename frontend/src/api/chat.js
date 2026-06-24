@@ -17,24 +17,28 @@ export function streamChat(payload, handlers = {}) {
     signal,
   })
     .then(async (resp) => {
+      console.debug('[sse] response', resp.status, resp.headers.get('content-type'))
       if (!resp.ok || !resp.body) {
         handlers.onError?.(new Error(`HTTP ${resp.status}`))
         return
       }
       const reader = resp.body.getReader()
       const decoder = new TextDecoder('utf-8')
+      // buffer 统一存已 normalize 的字节(只含 \n,没有 \r)
       let buffer = ''
       let _readCount = 0
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         _readCount += 1
-        buffer += decoder.decode(value, { stream: true })
+        // 先把 TCP 流的字节 decode 出来,再做 \r\n / \r → \n 归一
+        const chunk = decoder.decode(value, { stream: true })
+        buffer += chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
         if (_readCount <= 3 || _readCount % 20 === 0) {
           console.debug('[sse] read', _readCount, 'buffer bytes', buffer.length, 'head:', JSON.stringify(buffer.slice(0, 200)))
         }
 
-        // SSE 事件以 \n\n 分隔,每条事件形如:event: <type>\ndata: <json>\n
+        // SSE 事件以 \n\n 分隔(SSE 规范)
         let idx
         let _evtCount = 0
         while ((idx = buffer.indexOf('\n\n')) !== -1) {
@@ -66,14 +70,22 @@ function parseSSEEvent(raw) {
   let event = 'message'
   let data = ''
   for (const line of raw.split('\n')) {
-    if (line.startsWith('event:')) event = line.slice(6).trim()
-    else if (line.startsWith('data:')) data += line.slice(5).trim()
+    // SSE 规范:冒号后第一个空格不算 value 一部分;若没有冒号,整行就是字段名
+    const colonIdx = line.indexOf(':')
+    if (colonIdx < 0) continue
+    const field = line.slice(0, colonIdx)
+    // value 跳过冒号后第一个空格(若有)
+    let value = line.slice(colonIdx + 1)
+    if (value.startsWith(' ')) value = value.slice(1)
+    if (field === 'event') event = value
+    else if (field === 'data') data += (data ? '\n' : '') + value
   }
   if (!data) return null
   let payload
   try {
     payload = JSON.parse(data)
-  } catch {
+  } catch (e) {
+    console.debug('[sse] data JSON parse fail:', e.message, 'data head:', data.slice(0, 200))
     payload = { raw: data }
   }
   return { event, payload }
