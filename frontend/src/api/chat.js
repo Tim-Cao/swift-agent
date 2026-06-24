@@ -10,6 +10,8 @@ export function streamChat(payload, handlers = {}) {
   const controller = new AbortController()
   const { signal } = controller
 
+  console.debug('[sse] streamChat called, payload keys:', Object.keys(payload || {}))
+
   fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
