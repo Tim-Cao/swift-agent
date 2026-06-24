@@ -94,6 +94,7 @@ function parseSSEEvent(raw) {
 function dispatch({ event, payload }, handlers) {
   switch (event) {
     case 'token':
+      console.debug('[sse] → onToken len', (payload.content || '').length)
       handlers.onToken?.(payload.content ?? '')
       break
     case 'tool_call':
@@ -107,9 +108,11 @@ function dispatch({ event, payload }, handlers) {
       handlers.onFile?.(payload)
       break
     case 'done':
+      console.debug('[sse] → onDone')
       handlers.onDone?.(payload)
       break
     case 'error':
+      console.debug('[sse] → onError', payload)
       handlers.onError?.(new Error(payload.content || payload.message || 'stream error'))
       break
     default:
