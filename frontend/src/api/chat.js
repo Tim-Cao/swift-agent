@@ -10,7 +10,7 @@ export function streamChat(payload, handlers = {}) {
   const controller = new AbortController()
   const { signal } = controller
 
-  console.debug('[sse] streamChat called, payload keys:', Object.keys(payload || {}))
+  console.log('[SSE] streamChat called, keys:', Object.keys(payload || {}))
 
   fetch('/api/chat/stream', {
     method: 'POST',
@@ -19,7 +19,7 @@ export function streamChat(payload, handlers = {}) {
     signal,
   })
     .then(async (resp) => {
-      console.debug('[sse] response', resp.status, resp.headers.get('content-type'))
+      console.log('[SSE] response', resp.status, resp.headers.get('content-type'))
       if (!resp.ok || !resp.body) {
         handlers.onError?.(new Error(`HTTP ${resp.status}`))
         return
@@ -28,40 +28,34 @@ export function streamChat(payload, handlers = {}) {
       const decoder = new TextDecoder('utf-8')
       // buffer 统一存已 normalize 的字节(只含 \n,没有 \r)
       let buffer = ''
-      let _readCount = 0
+      let readCount = 0
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        _readCount += 1
-        // 先把 TCP 流的字节 decode 出来,再做 \r\n / \r → \n 归一
+        readCount += 1
+        // 把 TCP 流的字节 decode 出来,再做 \r\n / \r → \n 归一
         const chunk = decoder.decode(value, { stream: true })
         buffer += chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-        if (_readCount <= 3 || _readCount % 20 === 0) {
-          console.debug('[sse] read', _readCount, 'buffer bytes', buffer.length, 'head:', JSON.stringify(buffer.slice(0, 200)))
+        if (readCount <= 3) {
+          console.log('[SSE] read', readCount, 'bytes:', buffer.length, 'head:', JSON.stringify(buffer.slice(0, 250)))
         }
 
         // SSE 事件以 \n\n 分隔(SSE 规范)
         let idx
-        let _evtCount = 0
         while ((idx = buffer.indexOf('\n\n')) !== -1) {
           const raw = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 2)
           const evt = parseSSEEvent(raw)
-          if (!evt) {
-            console.debug('[sse] skipped raw (no data):', JSON.stringify(raw).slice(0, 200))
-            continue
-          }
-          _evtCount += 1
-          if (_evtCount <= 3) {
-            console.debug('[sse] dispatch', evt.event, 'payload keys:', Object.keys(evt.payload || {}))
-          }
+          if (!evt) continue
+          console.log('[SSE] dispatch', evt.event, 'payload:', JSON.stringify(evt.payload).slice(0, 150))
           dispatch(evt, handlers)
         }
       }
-      console.debug('[sse] stream end, total reads', _readCount)
+      console.log('[SSE] stream end, total reads:', readCount, 'remaining buffer:', JSON.stringify(buffer))
       handlers.onDone?.({})
     })
     .catch((err) => {
+      console.error('[SSE] fetch chain error:', err)
       if (err.name !== 'AbortError') handlers.onError?.(err)
     })
 
@@ -72,11 +66,10 @@ function parseSSEEvent(raw) {
   let event = 'message'
   let data = ''
   for (const line of raw.split('\n')) {
-    // SSE 规范:冒号后第一个空格不算 value 一部分;若没有冒号,整行就是字段名
+    // SSE 规范:冒号后第一个空格不算 value 一部分;若没有冒号,跳过
     const colonIdx = line.indexOf(':')
     if (colonIdx < 0) continue
     const field = line.slice(0, colonIdx)
-    // value 跳过冒号后第一个空格(若有)
     let value = line.slice(colonIdx + 1)
     if (value.startsWith(' ')) value = value.slice(1)
     if (field === 'event') event = value
@@ -86,8 +79,7 @@ function parseSSEEvent(raw) {
   let payload
   try {
     payload = JSON.parse(data)
-  } catch (e) {
-    console.debug('[sse] data JSON parse fail:', e.message, 'data head:', data.slice(0, 200))
+  } catch {
     payload = { raw: data }
   }
   return { event, payload }
@@ -96,7 +88,6 @@ function parseSSEEvent(raw) {
 function dispatch({ event, payload }, handlers) {
   switch (event) {
     case 'token':
-      console.debug('[sse] → onToken len', (payload.content || '').length)
       handlers.onToken?.(payload.content ?? '')
       break
     case 'tool_call':
@@ -110,11 +101,11 @@ function dispatch({ event, payload }, handlers) {
       handlers.onFile?.(payload)
       break
     case 'done':
-      console.debug('[sse] → onDone')
+      console.log('[SSE] onDone fired')
       handlers.onDone?.(payload)
       break
     case 'error':
-      console.debug('[sse] → onError', payload)
+      console.log('[SSE] onError from server:', payload)
       handlers.onError?.(new Error(payload.content || payload.message || 'stream error'))
       break
     default:
