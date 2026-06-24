@@ -24,21 +24,35 @@ export function streamChat(payload, handlers = {}) {
       const reader = resp.body.getReader()
       const decoder = new TextDecoder('utf-8')
       let buffer = ''
+      let _readCount = 0
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+        _readCount += 1
         buffer += decoder.decode(value, { stream: true })
+        if (_readCount <= 3 || _readCount % 20 === 0) {
+          console.debug('[sse] read', _readCount, 'buffer bytes', buffer.length, 'head:', JSON.stringify(buffer.slice(0, 200)))
+        }
 
         // SSE 事件以 \n\n 分隔,每条事件形如:event: <type>\ndata: <json>\n
         let idx
+        let _evtCount = 0
         while ((idx = buffer.indexOf('\n\n')) !== -1) {
           const raw = buffer.slice(0, idx)
           buffer = buffer.slice(idx + 2)
           const evt = parseSSEEvent(raw)
-          if (!evt) continue
+          if (!evt) {
+            console.debug('[sse] skipped raw (no data):', JSON.stringify(raw).slice(0, 200))
+            continue
+          }
+          _evtCount += 1
+          if (_evtCount <= 3) {
+            console.debug('[sse] dispatch', evt.event, 'payload keys:', Object.keys(evt.payload || {}))
+          }
           dispatch(evt, handlers)
         }
       }
+      console.debug('[sse] stream end, total reads', _readCount)
       handlers.onDone?.({})
     })
     .catch((err) => {
