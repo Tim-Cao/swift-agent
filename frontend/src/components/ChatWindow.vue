@@ -17,16 +17,6 @@
       :session-id="sessionId"
       @send="onSend"
     />
-    <!-- 临时调试 overlay:把每个 token 直接拼到屏幕上,绕开所有 Vue 渲染逻辑。
-         硬刷后:看到这里有字 = onToken 被调;看不到 = SSE 解析或回调链断。
-         修好后会移除。 -->
-    <div
-      v-if="debugChunks.length"
-      style="position:fixed;bottom:0;left:0;right:0;max-height:30vh;overflow:auto;background:rgba(0,0,0,0.85);color:#0f0;font-family:monospace;font-size:11px;padding:6px;z-index:9999;white-space:pre-wrap"
-    >
-      <div>debug tokens ({{ debugChunks.length }} chunks, last len {{ debugChunks.at(-1)?.length }}):</div>
-      <div>{{ debugChunks.join('') }}</div>
-    </div>
   </div>
 </template>
 
@@ -47,9 +37,12 @@ const inputBarRef = ref(null)
 const { isStreaming, send } = useChat()
 
 /**
- * 流式消息列表:每个消息有稳定 id,流式期间用 immutable replace
- * (即"用新对象替换原对象")驱动 Vue 重渲染,避免直接 mutate reactive
- * 对象的属性时 HMR / 跨组件边界触发不到更新的边界问题。
+ * 流式消息列表:本地 ref 是显示真相;store 仅用于持久化。
+ *
+ * 关键设计:localMessages 只在 sessionId **变化**时从父组件同步。
+ * 父组件 store 自身在用户发消息后会变(因为我们 emit 了 appendMessage),
+ * 如果用 deep watch 同步会**覆盖**我们正在流式累积的本地状态,导致 token
+ * 全部丢失(用户看到的就是"任务结束才显示")。
  */
 let _idSeq = 0
 function nextId() {
@@ -58,17 +51,19 @@ function nextId() {
 }
 
 const localMessages = ref([])
-// 临时调试 buffer:记录每个 token,渲染在屏幕底部 overlay
-const debugChunks = ref([])
 
-// 父组件切会话 / 加载历史时整体替换
+// 切会话时同步
 watch(
-  () => props.messages,
-  (val) => {
-    localMessages.value = (val || []).map((m) => ({ ...m, id: m.id || nextId() }))
+  () => props.sessionId,
+  () => {
+    // 切到新会话 / 切回老会话:用父组件 store 的 messages 重新初始化
+    localMessages.value = (props.messages || []).map((m) => ({
+      ...m,
+      id: m.id || nextId(),
+    }))
     scrollToBottom()
   },
-  { immediate: true, deep: true },
+  { immediate: true },
 )
 
 function scrollToBottom() {
@@ -112,9 +107,6 @@ function appendTokenLocal(text) {
     content: (last.content || '') + text,
   }
   localMessages.value = [...arr.slice(0, -1), updated]
-  // 调试:在屏幕底部 overlay 显示,绕开 console / Vue 渲染
-  debugChunks.value.push(text)
-  console.log('[chat] onToken len', text.length, '→ total', updated.content.length)
 }
 
 function attachFileLocal(fileMeta) {
@@ -130,11 +122,11 @@ async function onSend(payload) {
     emit('appendMessage', { role: 'system', content: '请先在左侧选择或新建会话' })
     return
   }
-  // 立刻 push 用户消息 + 占位 assistant
+  // 1. 本地立刻拿到用户消息 + 占位 assistant
   pushLocal({ role: 'user', content: payload.message })
   pushLocal({ role: 'assistant', content: '', attachments: [] })
 
-  // 同步告诉父组件持久化用户消息
+  // 2. 同步告诉父组件持久化用户消息(后端流结束会自己 append 完整 assistant)
   emit('appendMessage', { role: 'user', content: payload.message })
 
   await send(
