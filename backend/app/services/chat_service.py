@@ -10,6 +10,11 @@ v5 改动:
     污染 checkpoint ID 链,扰乱 tool_call↔tool_message 配对与 summarization tombstone。
   - 业务库(SQLite)与 checkpointer 是两个独立层:业务库存审计/展示,
     checkpointer 存图运行时 state;两者通过 session_id 关联。
+
+v8.10 改动:
+  - 捕获异常时区分"上游 LLM provider 临时错误"和"业务错误":
+    上游 5xx / 网络断 / 超时 → 给前端友好提示"上游 LLM 服务暂时不可用,请稍后重试";
+    业务错误保持原样
 """
 
 from __future__ import annotations
@@ -30,6 +35,91 @@ from app.services.session_service import (
 from app.supervisor.builder import get_supervisor, make_thread_config
 
 logger = logging.getLogger(__name__)
+
+
+def _classify_stream_error(e: BaseException) -> dict[str, Any]:
+    """把 stream_chat 抛出的异常分类成 {code, user_message, log_level}。
+
+    v8.10:
+      - provider 5xx (openai.InternalServerError) → user-friendly 重试提示
+      - provider 网络/超时 (APIConnectionError / APITimeoutError) → 同上
+      - provider 4xx (RateLimitError / BadRequestError 等) → 保留原 message 但加前缀
+      - 业务错误 / 其它 → 保留原 message
+    """
+    # 1) 尝试导入 openai 的异常类型(没装也不影响)
+    try:
+        from openai import (
+            APIConnectionError,
+            APIStatusError,
+            APITimeoutError,
+            InternalServerError,
+            RateLimitError,
+        )
+    except ImportError:
+        APIConnectionError = APITimeoutError = APIStatusError = None  # type: ignore
+        InternalServerError = RateLimitError = None  # type: ignore
+
+    # 2) 优先按 type 匹配
+    name = type(e).__name__
+
+    if InternalServerError is not None and isinstance(e, InternalServerError):
+        return {
+            "code": "provider_5xx",
+            "user_message": "上游 LLM 服务暂时不可用(500),请稍后重试",
+            "log_level": "warning",
+        }
+    if APITimeoutError is not None and isinstance(e, APITimeoutError):
+        return {
+            "code": "provider_timeout",
+            "user_message": "上游 LLM 服务连接超时,请稍后重试",
+            "log_level": "warning",
+        }
+    if APIConnectionError is not None and isinstance(e, APIConnectionError):
+        return {
+            "code": "provider_connection",
+            "user_message": "上游 LLM 服务网络不通,请稍后重试",
+            "log_level": "warning",
+        }
+    if RateLimitError is not None and isinstance(e, RateLimitError):
+        return {
+            "code": "provider_rate_limit",
+            "user_message": "上游 LLM 调用频率超限,请稍候再试",
+            "log_level": "warning",
+        }
+    # 3) 字符串兜底匹配(避免漏掉某种 SDK 包装层)
+    s = str(e).lower()
+    # "internal server error" / "internalservererror" / "server_error" 等
+    if "500" in s and ("internal server" in s or "internalserver" in s or "server_error" in s):
+        return {
+            "code": "provider_5xx",
+            "user_message": "上游 LLM 服务暂时不可用(500),请稍后重试",
+            "log_level": "warning",
+        }
+    if "timeout" in s or "timed out" in s:
+        return {
+            "code": "provider_timeout",
+            "user_message": "上游 LLM 服务连接超时,请稍后重试",
+            "log_level": "warning",
+        }
+    if ("connection" in s or "connect" in s) and ("error" in s or "reset" in s or "refused" in s):
+        return {
+            "code": "provider_connection",
+            "user_message": "上游 LLM 服务网络不通,请稍后重试",
+            "log_level": "warning",
+        }
+    if "rate limit" in s or "rate_limit" in s or "429" in s:
+        return {
+            "code": "provider_rate_limit",
+            "user_message": "上游 LLM 调用频率超限,请稍候再试",
+            "log_level": "warning",
+        }
+
+    # 4) 业务/未知错误 → 原样
+    return {
+        "code": "internal",
+        "user_message": str(e),
+        "log_level": "exception",
+    }
 
 
 async def ensure_session(
@@ -105,8 +195,22 @@ async def stream_chat(
                     file_emitted = True
             yield mapped
     except Exception as e:  # noqa: BLE001
-        logger.exception("stream failed")
-        yield {"event": "error", "data": {"message": str(e)}}
+        classified = _classify_stream_error(e)
+        # v8.10:provider 临时错误只记 warning(预期会自愈),不刷 exception
+        if classified["log_level"] == "warning":
+            logger.warning(
+                "stream failed (provider transient): code=%s err=%s",
+                classified["code"], e,
+            )
+        else:
+            logger.exception("stream failed")
+        yield {
+            "event": "error",
+            "data": {
+                "message": classified["user_message"],
+                "code": classified["code"],
+            },
+        }
 
     # 兜底:如果到流结束都没在文本里扫到 xlsx 路径(可能 LLM 没明说,
     # 但 write_excel 实际生成了文件),试着扫一下完整文本的最后一遍
