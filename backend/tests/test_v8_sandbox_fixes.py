@@ -187,3 +187,62 @@ def test_supervisor_prompt_extracts_whitelist_from_message():
     sp = s.supervisor_system_prompt
     assert "allowed_files" in sp
     assert "白名单" in sp or "allowed_files" in sp
+
+
+# --------------------------------------------------------------------------- #
+# 6) v8.9:sandbox 注入 csv_dir / allowed_files + loaded_columns 回传
+# --------------------------------------------------------------------------- #
+
+
+def test_sandbox_injects_csv_dir_and_allowed_files(csv_dir):
+    """v8.9:沙箱把 csv_dir 和 allowed_files 注入 globals,agent 写
+    `csv_dir + '/a.csv'` 不会再 NameError。"""
+    code = textwrap.dedent(f"""
+        path = csv_dir + '/a.csv'
+        df = pd_safe_read_csv(path)
+        RESULT_DF = df.copy()
+    """)
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 3
+
+
+def test_sandbox_returns_loaded_columns_on_keyerror(csv_dir):
+    """v8.9:KeyError 时回传 loaded_columns,agent 看到就能修正列名。"""
+    code = textwrap.dedent(f"""
+        # 列名带括号,故意写错(去掉括号)
+        RESULT_DF = a[a['name_typo'].notna()].copy()
+    """)
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is False
+    assert "loaded_columns" in out
+    assert "a" in out["loaded_columns"]
+    # 应该能看到真实列名,例如 id / name
+    assert "id" in out["loaded_columns"]["a"] or "name" in out["loaded_columns"]["a"]
+
+
+def test_intake_agent_prompt_requires_verbatim_column_repr():
+    """v8.9:IntakeAgent 必须明确:列名 repr 必须从 inspect_csv 1:1 复制,
+    不要归一化/简化。"""
+    sp = _get_agent("IntakeAgent")["system_prompt"]
+    # 必须提到"原样"或"1:1"或"repr"
+    assert "repr" in sp or "原样" in sp or "1:1" in sp
+    # 必须警告不要归一化列名
+    assert "归一化" in sp or "简化" in sp or "不要" in sp
+
+
+def test_rule_parser_agent_prompt_requires_verbatim_column_strings():
+    """v8.9:RuleParserAgent 必须一字不差用 IntakeAgent 给的列名字符串。"""
+    sp = _get_agent("RuleParserAgent")["system_prompt"]
+    # 必须强调"原样"或"一字不差"
+    assert "原样" in sp or "一字不差" in sp
+    # 必须强调不要归一化
+    assert "归一化" in sp or "简化" in sp or "不要" in sp
