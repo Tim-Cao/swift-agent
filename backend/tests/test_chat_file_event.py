@@ -89,3 +89,34 @@ def test_detect_xlsx_none_output():
     """None 输入也不崩。"""
     assert _detect_file_event(None, SID) is None
     assert _detect_file_event("", SID) is None
+
+
+def test_detect_xlsx_in_accumulated_text_token_by_token(session_dir):
+    """v8.6:stream_chat 在每个 token 到达时扫描累积文本。
+    模拟 LLM 边输出边暴露 xlsx 路径:前 N 个 token 还没出现路径 → None,
+    出现路径的 token 之后立刻返回 file 事件(只发一次——靠 stream_chat
+    自己的 file_emitted 标志去重,_detect_file_event 本身每次都返回)。"""
+    xlsx = session_dir / "result.xlsx"
+    xlsx.write_bytes(b"x")
+    path = str(xlsx)
+
+    # 模拟 stream_chat 的扫描循环:_detect_file_event 每次都返回,
+    # stream_chat 自己的 file_emitted 标志保证 file 事件只发一次
+    accumulated = ""
+    file_emitted = False
+    first_file_evt = None
+    emit_count = 0
+    for tok in ["Done. ", "Saved to ", path, " — 100 rows."]:
+        accumulated += tok
+        evt = _detect_file_event(accumulated, SID)
+        if evt and not file_emitted:
+            file_emitted = True
+            first_file_evt = evt
+            emit_count += 1
+        elif evt and file_emitted:
+            # 模拟 stream_chat 不再 yield
+            pass
+
+    assert first_file_evt is not None
+    assert first_file_evt["data"]["filename"] == "result.xlsx"
+    assert emit_count == 1  # 整个流期间 file 事件只发 1 次

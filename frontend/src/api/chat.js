@@ -10,8 +10,6 @@ export function streamChat(payload, handlers = {}) {
   const controller = new AbortController()
   const { signal } = controller
 
-  console.log('[SSE] streamChat called, keys:', Object.keys(payload || {}))
-
   fetch('/api/chat/stream', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -19,7 +17,6 @@ export function streamChat(payload, handlers = {}) {
     signal,
   })
     .then(async (resp) => {
-      console.log('[SSE] response', resp.status, resp.headers.get('content-type'))
       if (!resp.ok || !resp.body) {
         handlers.onError?.(new Error(`HTTP ${resp.status}`))
         return
@@ -28,17 +25,12 @@ export function streamChat(payload, handlers = {}) {
       const decoder = new TextDecoder('utf-8')
       // buffer 统一存已 normalize 的字节(只含 \n,没有 \r)
       let buffer = ''
-      let readCount = 0
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        readCount += 1
         // 把 TCP 流的字节 decode 出来,再做 \r\n / \r → \n 归一
         const chunk = decoder.decode(value, { stream: true })
         buffer += chunk.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-        if (readCount <= 3) {
-          console.log('[SSE] read', readCount, 'bytes:', buffer.length, 'head:', JSON.stringify(buffer.slice(0, 250)))
-        }
 
         // SSE 事件以 \n\n 分隔(SSE 规范)
         let idx
@@ -47,15 +39,12 @@ export function streamChat(payload, handlers = {}) {
           buffer = buffer.slice(idx + 2)
           const evt = parseSSEEvent(raw)
           if (!evt) continue
-          console.log('[SSE] dispatch', evt.event, 'payload:', JSON.stringify(evt.payload).slice(0, 150))
           dispatch(evt, handlers)
         }
       }
-      console.log('[SSE] stream end, total reads:', readCount, 'remaining buffer:', JSON.stringify(buffer))
       handlers.onDone?.({})
     })
     .catch((err) => {
-      console.error('[SSE] fetch chain error:', err)
       if (err.name !== 'AbortError') handlers.onError?.(err)
     })
 
@@ -101,11 +90,9 @@ function dispatch({ event, payload }, handlers) {
       handlers.onFile?.(payload)
       break
     case 'done':
-      console.log('[SSE] onDone fired')
       handlers.onDone?.(payload)
       break
     case 'error':
-      console.log('[SSE] onError from server:', payload)
       handlers.onError?.(new Error(payload.content || payload.message || 'stream error'))
       break
     default:

@@ -92,13 +92,14 @@ async def stream_chat(
             if mapped is None:
                 continue
             _collect_text(mapped, full_text_parts)
-            # 检测 tool_result 里出现 .xlsx 路径 → 发 file 事件(只发一次)
-            if (
-                not file_emitted
-                and mapped.get("event") == "tool_result"
-                and mapped.get("data", {}).get("name") == "write_excel"
-            ):
-                file_evt = _detect_file_event(mapped["data"].get("output"), session_id)
+            # v8.6:从累积的 assistant 文本里检测 xlsx 路径 → 发 file 事件
+            # (之前检测 tool_result 事件,但 v8.4 把 tool_result 静默了,触发条件
+            # 永远不满足 → file 事件不发 → 前端没有下载按钮)。
+            # LLM 完成任务后会在回复里写"saved to /tmp/swift-agent/.../result.xlsx",
+            # 这里每收到一个 token 就扫一次,首个匹配的文件立刻发 file 事件。
+            if not file_emitted:
+                accumulated = "".join(full_text_parts)
+                file_evt = _detect_file_event(accumulated, session_id)
                 if file_evt:
                     yield file_evt
                     file_emitted = True
@@ -106,6 +107,15 @@ async def stream_chat(
     except Exception as e:  # noqa: BLE001
         logger.exception("stream failed")
         yield {"event": "error", "data": {"message": str(e)}}
+
+    # 兜底:如果到流结束都没在文本里扫到 xlsx 路径(可能 LLM 没明说,
+    # 但 write_excel 实际生成了文件),试着扫一下完整文本的最后一遍
+    if not file_emitted:
+        full_text = "".join(full_text_parts)
+        file_evt = _detect_file_event(full_text, session_id)
+        if file_evt:
+            yield file_evt
+            file_emitted = True
 
     # 3. 业务库持久化 assistant 回复 + 发送 done
     full_text = "".join(full_text_parts)
@@ -127,7 +137,8 @@ def _map_event(raw: dict[str, Any]) -> dict[str, Any] | None:
 
     v8.4 简化:只对外暴露 token / file / done / error 四类事件。
     - on_tool_start / on_tool_end(对应 tool_call / tool_result)静默掉——
-      前端用不到,且 xlsx 路径在 _detect_file_event 里另外检测后再发 file
+      前端用不到。v8.6 起,file 事件由 stream_chat 扫描累积的 assistant
+      文本产生,不再依赖 tool_result 事件。
     - on_chain_start / on_chain_end / on_chain_stream / metadata 不下发
     """
     name = raw.get("event")
