@@ -9,6 +9,16 @@
   - exec 时 __builtins__ 用白名单 SAFE_BUILTINS,只暴露预加载的命名空间。
   - 用户传 allowed_files 限定可访问的 CSV(读入内存做 <stem> 变量)。
 
+v8.8 改动:
+  - 容忍 /tmp ↔ /private/tmp symlink:macOS 上 Path.resolve() 后
+    /tmp/swift-agent/... 会变成 /private/tmp/swift-agent/...,agent
+    给的 csv_dir 可能是其中任意一种,两种形式都尝试打开
+  - csv_dir 全部缺失时**立即返回错误**(不再静默返回空 loaded_files),
+    让 LLM 知道路径有问题,而不是收到 loaded_files=[] 误以为成功
+  - 暴露 pd_safe_read_csv:agent 误写绝对路径时,只要路径在 csv_dir 下
+    且文件名在 allowed_files 里,直接返回预加载 DataFrame 的副本
+    (避免 FileNotFoundError,同时阻止访问白名单外文件)
+
 为什么 import 不拒绝而是 strip:
   - LLM 生成的代码常带 `import pandas as pd` / `import numpy as np`,
     即便不需要写出来也属于习惯
@@ -100,19 +110,70 @@ def _ast_check(code: str) -> str | None:
     return None
 
 
-def _load_csvs_to_globals(csv_dir: str, allowed_files: list[str]) -> tuple[dict, list[str]]:
-    """把 allowed_files 里的 CSV 读成 DataFrame,key 用 stem(无扩展名)。"""
+def _load_csvs_to_globals(csv_dir: str, allowed_files: list[str]) -> tuple[dict, list[str], str | None]:
+    """把 allowed_files 里的 CSV 读成 DataFrame,key 用 stem(无扩展名)。
+
+    v8.8 改动:
+      - 容忍 /tmp ↔ /private/tmp symlink(macOS 上 Path.resolve() 后
+        /tmp/swift-agent/... 变成 /private/tmp/swift-agent/...);agent
+        给的 csv_dir 可能是其中任意一种,两种都试
+      - 如果 csv_dir 在两种形式下都不存在,返回 error_msg 而不是
+        静默返回空 —— LLM 需要知道 csv_dir 是错的,而不是拿到
+        loaded_files=[] 误以为成功
+      - 返回 (loaded_dict, loaded_stem_names, error_msg)
+    """
     loaded: dict[str, pd.DataFrame] = {}
     csv_dir_p = Path(csv_dir)
+
+    # 兼容 symlink:在 macOS 上 /tmp 是 /private/tmp 的 symlink,
+    # agent 给的路径可能是其中任意一种。两种都试。
+    candidates = [csv_dir_p]
+    try:
+        resolved = csv_dir_p.resolve()
+        if resolved != csv_dir_p:
+            candidates.append(resolved)
+    except OSError:
+        pass
+    # 也加一个把 /tmp 和 /private/tmp 互换的候选项
+    s = str(csv_dir_p)
+    if s.startswith("/private/tmp/"):
+        candidates.append(Path("/tmp/" + s[len("/private/tmp/"):]))
+    elif s.startswith("/tmp/"):
+        candidates.append(Path("/private/tmp/" + s[len("/tmp/"):]))
+
+    chosen_dir: Path | None = None
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            chosen_dir = c
+            break
+
+    if chosen_dir is None:
+        return (
+            {},
+            [],
+            f"csv_dir not found: tried {[str(c) for c in candidates]}",
+        )
+
     loaded_names: list[str] = []
+    missing: list[str] = []
     for fname in allowed_files:
-        p = csv_dir_p / fname
+        p = chosen_dir / fname
         if not p.exists():
+            missing.append(fname)
             continue
         stem = p.stem.replace("-", "_").replace(" ", "_")
         loaded[stem] = pd.read_csv(p)
         loaded_names.append(stem)
-    return loaded, loaded_names
+
+    if missing and not loaded_names:
+        # 全部文件都找不到,而不是部分找不到 —— 把 csv_dir 状态也回传
+        return (
+            {},
+            [],
+            f"csv_dir exists at {chosen_dir} but none of allowed_files found: {missing}",
+        )
+
+    return loaded, loaded_names, None
 
 
 def _strip_all_imports(code: str) -> str:
@@ -163,16 +224,67 @@ def execute_pandas_code(
     # "import os" 都安全;业务代码继续运行。
     code = _strip_all_imports(code)
 
-    dfs, loaded_names = _load_csvs_to_globals(csv_dir, allowed_files)
+    dfs, loaded_names, load_err = _load_csvs_to_globals(csv_dir, allowed_files)
+    if load_err:
+        # csv_dir 找不到 / 文件全部缺失 —— 立刻反馈给 LLM,别让它
+        # 继续跑 pd.read_csv(absolute_path) 再炸 FileNotFoundError
+        return {
+            "ok": False,
+            "error": load_err,
+            "loaded_files": [],
+        }
+
+    # v8.8:不在 exec 前 monkey-patch pd.read_csv(避免跨调用的全局状态泄漏)
+    # 而是通过 pd_safe_read_csv 暴露给沙箱。如果 LLM 写了绝对路径,可以引导它
+    # 改用 pd_safe_read_csv;但更主要的修复路径是 prompt 端告诉 agent
+    # 不要写绝对路径,只用预加载变量名(ds / mh / ...)
+    real_read_csv = pd.read_csv
+
+    def pd_safe_read_csv(filepath_or_buffer, *args, **kwargs):
+        """安全版 pd.read_csv:对 csv_dir 下的允许文件直接返回预加载的副本。
+
+        用法:`pd_safe_read_csv(csv_dir + '/a.csv')` 等价于用预加载的 `a` 变量。
+        用于兼容 agent 误写了绝对路径的情况,但仍要求 path 在 csv_dir 下。
+
+        v8.8 强化:如果 path 在 csv_dir 下但**不在** allowed_files 白名单,
+        主动抛 PermissionError 而不是静默让 pd 读到 —— 这正是用户的
+        "白名单外文件不能读"的诉求。
+        """
+        p_str = str(filepath_or_buffer)
+        try:
+            target = Path(p_str).resolve()
+        except (OSError, RuntimeError):
+            target = Path(p_str)
+        try:
+            csv_dir_real = Path(csv_dir).resolve()
+        except (OSError, RuntimeError):
+            csv_dir_real = Path(csv_dir)
+
+        # 在 csv_dir 下 → 强制走白名单
+        if csv_dir_real in target.parents or target.parent == csv_dir_real:
+            fname = target.name
+            stem = target.stem.replace("-", "_").replace(" ", "_")
+            if fname in allowed_files and stem in dfs:
+                return dfs[stem].copy()
+            # 在 csv_dir 下但不在白名单 → 拒绝(隐私边界)
+            raise PermissionError(
+                f"file {fname!r} is not in allowed_files for this sandbox; "
+                f"ask Supervisor to update allowed_files if needed"
+            )
+        # 不在 csv_dir 下 → 交给 pd 自己处理(会自然 FileNotFoundError 或读到别处)
+        return real_read_csv(filepath_or_buffer, *args, **kwargs)
 
     globals_dict: dict = {
         "__builtins__": SAFE_BUILTINS,
         "pd": pd,
+        # 给 agent 用的安全版本,允许绝对路径但只对白名单生效
+        "pd_safe_read_csv": pd_safe_read_csv,
         # np 是 pd 的依赖,几乎一定有;导入失败也不致命,LLM 代码引用 np 时
         # 会自动 NameError 提示。预加载是为了让"import numpy as np"合法。
         "np": _safe_import("numpy"),
         **dfs,
     }
+
     locals_dict: dict = {}
 
     try:
