@@ -282,6 +282,11 @@ def execute_pandas_code(
         # np 是 pd 的依赖,几乎一定有;导入失败也不致命,LLM 代码引用 np 时
         # 会自动 NameError 提示。预加载是为了让"import numpy as np"合法。
         "np": _safe_import("numpy"),
+        # 把上下文变量也注入,避免 agent 自己"发明" csv_dir 这种 Jinja 模板
+        # 变量(之前 v8.9 看到 RuleParserAgent 写出
+        # `pd.read_csv(f"{csv_dir}/a.csv")` 然后报 NameError)
+        "csv_dir": csv_dir,
+        "allowed_files": list(allowed_files),
         **dfs,
     }
 
@@ -292,11 +297,15 @@ def execute_pandas_code(
     except Exception as e:  # noqa: BLE001
         import traceback as tb
 
+        # v8.9:把加载到的 DataFrame 的真实列名 repr 一起返回,这样 KeyError 时
+        # agent 看到错误就知道实际有哪些列可写
+        loaded_columns = {name: list(dfs[name].columns) for name in loaded_names}
         return {
             "ok": False,
             "error": str(e),
             "traceback": tb.format_exc(),
             "loaded_files": loaded_names,
+            "loaded_columns": loaded_columns,
         }
 
     result_df = locals_dict.get("RESULT_DF")
