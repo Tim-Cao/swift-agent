@@ -201,20 +201,61 @@ def _strip_all_imports(code: str) -> str:
 def execute_pandas_code(
     code: str,
     csv_dir: str,
-    allowed_files: list[str],
+    allowed_files: list[str] | None = None,
     output_csv: str | None = None,
 ) -> dict:
-    """在受限沙箱里执行 pandas 代码。
+    """【数据处理首选】在受限沙箱里执行 pandas 代码,处理 CSV 并返回结果。
+
+    **调用场景**:你需要做查重、筛选、聚合、合并多表、日期比较、分组统计等
+    任何 pandas 数据处理任务时,直接调本工具。不要手写 CSV 文本、不要逐行 read。
+    沙箱已经预加载 `pd` / `np` / 已加载的 DataFrame(以 stem 做变量名),
+    业务代码**不要写 import / open / 文件路径**(详见 csv_dir 注入到 globals)。
 
     Args:
-        code: Python 代码,必须把最终结果赋给 RESULT_DF
-        csv_dir: CSV 所在目录
-        allowed_files: 允许访问的文件名列表(仅这些会被读入内存)
-        output_csv: 把 RESULT_DF 写出的路径;若 None 则只返回前 20 行样例
+        code: Python 字符串,必须把最终结果赋给 `RESULT_DF`(一个 pd.DataFrame)。
+              例:`RESULT_DF = a[a.duplicated(subset=['name'], keep=False)]`
+        csv_dir: CSV 目录绝对路径。Supervisor 会给你(原样),不要修改。
+        allowed_files: 允许读的 CSV 文件名列表(白名单);不传则默认
+                       `["*"]` 表示 csv_dir 下的所有 .csv 都可读。
+        output_csv: 把 RESULT_DF 写出的路径。不传(None)则只返回前 20 行样例,
+                    不落盘。需要落盘给 ExcelWriterAgent 时传 `<session_dir>/result.csv`。
 
     Returns:
-        {"ok": bool, "result_csv": str|None, "result_summary": {...}|None, "error": str|None, "traceback": str|None}
+        成功:{"ok": True, "result_csv": ..., "result_summary": {row_count, columns, head}, "loaded_files": [...]}
+        失败:{"ok": False, "error": ..., "traceback": ..., "loaded_files": [...], "loaded_columns": {<var>: [<col>...]}}
+
+    Examples:
+        1) 简单筛选(allowed_files 默认读全部):
+           execute_pandas_code(
+               code="RESULT_DF = a[a['age'] > 30]",
+               csv_dir="/tmp/swift-agent/<sid>/csv",
+           )
+
+        2) 多表 join(指定白名单):
+           execute_pandas_code(
+               code="RESULT_DF = orders.merge(users, on='user_id')",
+               csv_dir="/tmp/swift-agent/<sid>/csv",
+               allowed_files=["orders.csv", "users.csv"],
+           )
+
+        3) 落盘 + 写 Excel:
+           execute_pandas_code(
+               code="RESULT_DF = df.groupby('category').sum()",
+               csv_dir="/tmp/swift-agent/<sid>/csv",
+               output_csv="/tmp/swift-agent/<sid>/result.csv",
+           )
     """
+    # v8.11:allowed_files 默认 ["*"] —— 自动扫描 csv_dir 下所有 .csv
+    if allowed_files is None:
+        csv_dir_p = Path(csv_dir)
+        if csv_dir_p.exists() and csv_dir_p.is_dir():
+            allowed_files = sorted(
+                p.name for p in csv_dir_p.iterdir()
+                if p.is_file() and p.suffix.lower() == ".csv"
+            )
+        else:
+            allowed_files = []
+
     ast_err = _ast_check(code)
     if ast_err:
         return {"ok": False, "error": ast_err, "traceback": None}

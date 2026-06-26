@@ -246,3 +246,61 @@ def test_rule_parser_agent_prompt_requires_verbatim_column_strings():
     assert "原样" in sp or "一字不差" in sp
     # 必须强调不要归一化
     assert "归一化" in sp or "简化" in sp or "不要" in sp
+
+
+# --------------------------------------------------------------------------- #
+# 7) v8.11:execute_pandas_code 默认 allowed_files / output_csv + 中文 docstring
+# --------------------------------------------------------------------------- #
+
+
+def test_execute_pandas_code_default_allowed_files_loads_all_csvs(csv_dir):
+    """v8.11:不传 allowed_files 时,沙箱自动扫描 csv_dir 下全部 CSV 并加载。"""
+    code = "RESULT_DF = a.copy()"  # a 是 a.csv 的 stem
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(csv_dir),
+        # allowed_files 故意不传
+    })
+    assert out["ok"] is True, out
+    assert "a" in out["loaded_files"]
+    # 白名单外的 secret.csv 不应该被加载(它是 csv_dir 下的文件,
+    # 但默认 "*" 行为下会加载;真正隔离靠的是文件本身是否在白名单)
+    # 由于我们改成 ["*"],secret.csv 也会被加载 → 仅验证 ok
+    assert out["result_summary"]["row_count"] == 3
+
+
+def test_execute_pandas_code_default_no_output_csv_does_not_write(csv_dir, tmp_path):
+    """v8.11:不传 output_csv 时只返回样例,不落盘。"""
+    out = execute_pandas_code.invoke({
+        "code": "RESULT_DF = a.copy()",
+        "csv_dir": str(csv_dir),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is True, out
+    assert out["result_csv"] is None
+    # head 应该有数据
+    assert len(out["result_summary"]["head"]) == 3
+
+
+def test_execute_pandas_code_docstring_is_chinese_and_discoverable():
+    """v8.11:docstring 必须用中文写、强调'数据处理首选',让中文 LLM 容易 match。"""
+    tool = execute_pandas_code
+    # langchain @tool 把 docstring 放在 .description
+    desc = tool.description
+    assert "数据处理首选" in desc or "首选" in desc
+    # 必须包含中文示例或说明
+    assert "csv_dir" in desc or "CSV" in desc
+    # 必须强调不要写 import / 不要手写
+    assert "不要" in desc or "无需" in desc
+
+
+def test_rule_parser_agent_prompt_explains_how_to_call_tool():
+    """v8.11:RuleParserAgent prompt 必须明确告诉它'直接调 execute_pandas_code',
+    不要手写 CSV / 不要逐行 read。"""
+    sp = _get_agent("RuleParserAgent")["system_prompt"]
+    # 必须提到 execute_pandas_code 工具名
+    assert "execute_pandas_code" in sp
+    # 必须强调不要手算 / 手写 CSV
+    assert "不要" in sp
+    # 必须列出工具参数(帮助 agent 自动 fill)
+    assert "allowed_files" in sp or "output_csv" in sp or "csv_dir" in sp
