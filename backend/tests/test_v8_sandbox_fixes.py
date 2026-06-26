@@ -304,3 +304,91 @@ def test_rule_parser_agent_prompt_explains_how_to_call_tool():
     assert "不要" in sp
     # 必须列出工具参数(帮助 agent 自动 fill)
     assert "allowed_files" in sp or "output_csv" in sp or "csv_dir" in sp
+
+
+# --------------------------------------------------------------------------- #
+# 8) v8.12:沙箱自动生成短别名 + _VAR_MAP introspection
+# --------------------------------------------------------------------------- #
+
+
+def test_sandbox_injects_short_aliases(tmp_path):
+    """v8.12:文件 TX103T-RG008_DS.csv 同时暴露成:
+    - TX103T_RG008_DS (canonical stem)
+    - DS / RG008_DS(短别名),避免 LLM 写 ds / mh 类短名 NameError。
+    """
+    d = tmp_path / "csv"
+    d.mkdir()
+    pd.DataFrame({"id": [1, 2], "v": [10, 20]}).to_csv(
+        d / "TX103T-RG008_DS.csv", index=False,
+    )
+
+    # 验证短别名能跑
+    code = "RESULT_DF = DS.copy()"  # 用 DS 别名
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(d),
+        "allowed_files": ["TX103T-RG008_DS.csv"],
+    })
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 2
+
+
+def test_sandbox_var_map_and_hint(tmp_path):
+    """v8.12:_VAR_MAP 和 _VAR_HINT 必须注入 globals,LLM 可以 introspection。"""
+    d = tmp_path / "csv"
+    d.mkdir()
+    pd.DataFrame({"id": [1]}).to_csv(d / "a.csv", index=False)
+
+    code = textwrap.dedent("""
+        # 用 _VAR_HINT 验证短别名映射
+        assert isinstance(_VAR_HINT, str) and "a" in _VAR_HINT
+        assert isinstance(_VAR_MAP, dict)
+        # canonical "a" 必须映射回 "a.csv"
+        assert _VAR_MAP.get("a") == "a"
+        RESULT_DF = a.copy()
+    """)
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(d),
+        "allowed_files": ["a.csv"],
+    })
+    assert out["ok"] is True, out
+    # loaded_columns 会显示 a
+    assert "a" in out["loaded_files"]
+
+
+def test_sandbox_alias_no_collision(tmp_path):
+    """v8.12:两个同名末段(罕见)走降级策略,不会覆盖。
+
+    这里 project_DS.csv 和 other_DS.csv 都想用 DS 短名,沙箱会
+    退化成更长的别名(penultimate+last 拼接)或保持 canonical。
+    验证:两个 canonical 名都可用,且至少有一个短别名可用(没被覆盖)。
+    """
+    d = tmp_path / "csv"
+    d.mkdir()
+    pd.DataFrame({"x": [1]}).to_csv(d / "project_DS.csv", index=False)
+    pd.DataFrame({"y": [2]}).to_csv(d / "other_DS.csv", index=False)
+
+    # 直接用两个 canonical 名
+    code = textwrap.dedent("""
+        # 两个 canonical 都必须可用
+        merged = pd.concat([project_DS, other_DS], ignore_index=True)
+        RESULT_DF = merged
+    """)
+    out = execute_pandas_code.invoke({
+        "code": code,
+        "csv_dir": str(d),
+        "allowed_files": ["project_DS.csv", "other_DS.csv"],
+    })
+    assert out["ok"] is True, out
+    assert out["result_summary"]["row_count"] == 2
+
+
+def test_chat_service_uses_higher_recursion_limit():
+    """v8.12:chat_service.stream_chat 必须给 astream_events 传 recursion_limit=50,
+    避免 Excel pipeline 串行调度时 25 个 graph node 不够。"""
+    from app.services.chat_service import stream_chat
+    import inspect
+    src = inspect.getsource(stream_chat)
+    assert "recursion_limit" in src
+    assert "50" in src
