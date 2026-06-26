@@ -30,6 +30,7 @@ v8.8 改动:
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import Any
 
@@ -96,11 +97,14 @@ def _ast_check(code: str) -> str | None:
     except SyntaxError as e:
         return f"SyntaxError: {e}"
 
+    # v8.12:白名单里加 _VAR_MAP / _VAR_HINT,让 LLM 能 introspection 真实变量名
+    ALLOWED_DUNDER_NAMES = {"_", "_VAR_MAP", "_VAR_HINT"}
+
     for node in ast.walk(tree):
         # 禁止 dunder 访问 / __class__ / __import__ / __builtins__
         if isinstance(node, ast.Attribute) and node.attr.startswith("_"):
             return f"Dunder attribute not allowed: {node.attr} at line {node.lineno}"
-        if isinstance(node, ast.Name) and node.id.startswith("_") and node.id not in {"_"}:
+        if isinstance(node, ast.Name) and node.id.startswith("_") and node.id not in ALLOWED_DUNDER_NAMES:
             return f"Dunder name not allowed: {node.id} at line {node.lineno}"
 
         # 禁止 open / exec / eval / compile / __import__ 内置
@@ -315,6 +319,48 @@ def execute_pandas_code(
         # 不在 csv_dir 下 → 交给 pd 自己处理(会自然 FileNotFoundError 或读到别处)
         return real_read_csv(filepath_or_buffer, *args, **kwargs)
 
+    # v8.12:为每个加载的 DataFrame 额外生成短别名,解决 LLM 写短名
+    # (ds / mh / a / b)但沙箱实际变量是长 stem(TX103T_RG008_DS 等) 错配问题。
+    #
+    # 别名生成规则(取一个**不冲突**的**最简洁**的短名):
+    #   1. 如果 stem 是 *_XX 形式(如 TX103T_RG008_DS → 末段 DS),用末段大写
+    #   2. 否则用 stem 整体小写(如 orders → orders, a → a)
+    #   3. 冲突时拼文件名再退一步
+    #
+    # 同时把 _VAR_MAP / _VAR_HINT 注入 globals,LLM 可以:
+    #   print(_VAR_HINT)   → "用 TX103T_RG008_DS 表示 TX103T-RG008_DS.csv"
+    #   print(_VAR_MAP)    → {"TX103T_RG008_DS": "TX103T-RG008_DS.csv", ...}
+    alias_map: dict[str, str] = {}  # alias → canonical
+    canonical_to_alias: dict[str, str] = {}  # 反向
+    for canonical, df in dfs.items():
+        canonical_to_alias[canonical] = canonical  # 自己也是自己
+
+    for canonical in list(dfs.keys()):
+        # 尝试取末段大写作为别名
+        parts = re.split(r"[-_]", canonical)
+        if len(parts) >= 2:
+            candidate = parts[-1].upper()
+        else:
+            candidate = canonical.lower()
+        # 检查冲突
+        if candidate in alias_map and alias_map[candidate] != canonical:
+            # 冲突:拼前缀 + 末段
+            if len(parts) >= 2:
+                candidate = (parts[-2] + "_" + parts[-1]).upper()
+            else:
+                continue
+        if candidate in alias_map:
+            continue
+        alias_map[candidate] = canonical
+
+    # 构造 final dict
+    alias_dfs = {alias: dfs[alias_map[alias]] for alias in alias_map}
+
+    var_hint_lines = [
+        f"用 {alias} 表示 {alias_map[alias]}.csv" for alias in sorted(alias_map)
+    ]
+    var_hint = "沙箱预加载的 DataFrame 变量:\n" + "\n".join(var_hint_lines)
+
     globals_dict: dict = {
         "__builtins__": SAFE_BUILTINS,
         "pd": pd,
@@ -328,6 +374,11 @@ def execute_pandas_code(
         # `pd.read_csv(f"{csv_dir}/a.csv")` 然后报 NameError)
         "csv_dir": csv_dir,
         "allowed_files": list(allowed_files),
+        # v8.12:DataFrame 短别名 + introspection 帮手
+        **alias_dfs,
+        "_VAR_MAP": alias_map,
+        "_VAR_HINT": var_hint,
+        # 兼容旧行为:canonical 名也照样可用
         **dfs,
     }
 

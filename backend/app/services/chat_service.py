@@ -173,9 +173,14 @@ async def stream_chat(
     full_text_parts: list[str] = []
     file_emitted = False
     try:
+        # v8.12:提高递归上限从默认 25 → 50,避免 Excel pipeline 串行
+        # 调度子 Agent 时 25 个 graph node 不够用(IntakeAgent → RuleParserAgent
+        # → DataProcessingAgent → ExcelWriterAgent 一轮大约 8-12 个 node,
+        # 连续重试 2-3 轮就会 GraphRecursionError)
+        stream_config = {**config, "recursion_limit": 50}
         async for raw in agent.astream_events(
             delta_input,
-            config=config,
+            config=stream_config,
             version="v2",
         ):
             mapped = _map_event(raw)
