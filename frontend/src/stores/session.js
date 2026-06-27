@@ -45,7 +45,13 @@ export const useSessionStore = defineStore('session', () => {
     // 反过来:先 await 让 messages 就位,再 set currentId 触发
     // watcher 时读到的就是新 messages,localMessages 正确填充。
     const msgs = await apiMessages(id)
-    messages.value = msgs
+    // v8.14:后端把附件存进了 Message.meta_json,list_messages 已返回 meta。
+    // MessageBubble 直接读 message.attachments,所以这里把 meta.attachments
+    // 拍平到顶层,让刷新/前端重启后下载按钮仍能渲染出来。
+    messages.value = msgs.map((m) => ({
+      ...m,
+      attachments: m.attachments || m.meta?.attachments || [],
+    }))
     currentId.value = id
   }
 

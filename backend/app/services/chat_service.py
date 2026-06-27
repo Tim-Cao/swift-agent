@@ -172,6 +172,7 @@ async def stream_chat(
 
     full_text_parts: list[str] = []
     file_emitted = False
+    file_attachments: list[dict[str, Any]] = []  # v8.14:累积待持久化的附件
     try:
         # v8.12:提高递归上限从默认 25 → 50,避免 Excel pipeline 串行
         # 调度子 Agent 时 25 个 graph node 不够用(IntakeAgent → RuleParserAgent
@@ -197,6 +198,10 @@ async def stream_chat(
                 file_evt = _detect_file_event(accumulated, session_id)
                 if file_evt:
                     yield file_evt
+                    # v8.14:把附件的 data 收集起来,流结束后跟 assistant 文本
+                    # 一起落库 → 页面刷新后 / 前端重启后 MessageBubble 仍能
+                    # 渲染出下载按钮(否则附件只活在流期间,刷新就丢)
+                    file_attachments.append(file_evt["data"])
                     file_emitted = True
             yield mapped
     except Exception as e:  # noqa: BLE001
@@ -224,13 +229,22 @@ async def stream_chat(
         file_evt = _detect_file_event(full_text, session_id)
         if file_evt:
             yield file_evt
+            # v8.14:同样收集
+            file_attachments.append(file_evt["data"])
             file_emitted = True
 
     # 3. 业务库持久化 assistant 回复 + 发送 done
+    # v8.14:即便没有 text,只要有附件也要落 assistant 消息(否则附件找不到
+    # 归属的 message row,前端刷新后 list_messages 拿不到附件元信息)。
     full_text = "".join(full_text_parts)
-    if full_text:
+    if full_text or file_attachments:
+        meta = {"attachments": file_attachments} if file_attachments else None
         await repo.append_message(
-            db, session_id=session_id, role="assistant", content=full_text
+            db,
+            session_id=session_id,
+            role="assistant",
+            content=full_text,
+            meta=meta,
         )
         await db.commit()
     yield {"event": "done", "data": {"session_id": session_id}}
