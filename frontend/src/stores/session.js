@@ -19,6 +19,12 @@ export const useSessionStore = defineStore('session', () => {
 
   async function loadSessions() {
     sessions.value = await listSessions()
+    // v8.13:刷新页面时,如果有历史会话且当前没有选中,默认选中第一个,
+    // 这样刷新后能直接看到上次的对话内容(否则 messages 是空的,
+    // 用户会以为刷新把历史"清空"了)。
+    if (!currentId.value && sessions.value.length > 0) {
+      await selectSession(sessions.value[0].id)
+    }
   }
 
   async function newSession() {
@@ -30,8 +36,17 @@ export const useSessionStore = defineStore('session', () => {
   }
 
   async function selectSession(id) {
+    // v8.13:必须**先** await messages 再 set currentId。
+    // ChatWindow 的 watcher 是 watch(() => props.sessionId),依赖
+    // sessionId 变化触发 localMessages 同步。如果先 set currentId
+    // 再 await messages,await 让出主线程后 watcher 立即触发,此时
+    // props.messages 还是旧值([])→ localMessages 同步成空数组 →
+    // 后续 messages 更新没人 watch → 窗口空白。
+    // 反过来:先 await 让 messages 就位,再 set currentId 触发
+    // watcher 时读到的就是新 messages,localMessages 正确填充。
+    const msgs = await apiMessages(id)
+    messages.value = msgs
     currentId.value = id
-    messages.value = await apiMessages(id)
   }
 
   async function removeSession(id) {
