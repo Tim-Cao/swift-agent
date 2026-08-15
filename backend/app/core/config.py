@@ -154,6 +154,12 @@ class AppSettings(BaseSettings):
     server: ServerSettings = ServerSettings()
     persistence: PersistenceSettings = PersistenceSettings()
 
+    # Session log(每个会话的 JSONL)落盘目录。
+    # 目录布局:<trajectory_log_dir>/<session_id>/session.jsonl
+    # v9:由 SessionLogWriter 写入,SessionLogReader 折叠成 Trajectory。
+    trajectory_log_dir: str = "./data/sessions"
+    trajectory_log_enabled: bool = True
+
 
 @lru_cache
 def get_settings() -> AppSettings:

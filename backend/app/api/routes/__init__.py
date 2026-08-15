@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.routes import chat, downloads, health, messages, sessions, uploads
+from app.api.routes import chat, downloads, health, messages, sessions, trajectory, uploads
 
 api_router = APIRouter()
 api_router.include_router(health.router, prefix="/health", tags=["health"])
 api_router.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 api_router.include_router(messages.router, prefix="/sessions", tags=["messages"])
+# v9:trajectory 路由也挂在 /sessions 下,提供 trajectory + log/export
+api_router.include_router(trajectory.router, prefix="/sessions", tags=["trajectory"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(downloads.router, prefix="/downloads", tags=["downloads"])

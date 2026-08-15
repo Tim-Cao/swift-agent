@@ -10,3 +10,4 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1)
     agent_name: str | None = None
     upload_dir: str | None = None  # 上传后携带,让 Supervisor 知道文件路径
+    enable_web_search: bool = False  # 联网搜索开关;由 WebSearchGateMiddleware 按需过滤 MCP 工具
