@@ -63,7 +63,7 @@ def _build_agent() -> Any:
     llm = build_chat_model(settings.llm)
 
     # 拉取扩展内容
-    from middlewares import ALL_MIDDLEWARES
+    from middlewares import ALL_MIDDLEWARES, _register_default_middlewares
     from skills import load_skills
     from subagents import ALL_SUBAGENTS
 
@@ -71,18 +71,39 @@ def _build_agent() -> Any:
     # get_tools([...]),所以注册必须在 ALL_SUBAGENTS 构造前完成)
     from tools import excel_pipeline  # noqa: F401
 
+    # MCP 客户端必须在 _register_default_middlewares 之前初始化,
+    # 因为 WebSearchGateMiddleware 启动时要拿到 MCP 工具名集合
+    from app.core.mcp import get_mcp_tools
+
+    try:
+        mcp_tools = get_mcp_tools()
+    except RuntimeError:
+        # MCP 初始化失败(lifespan 阶段已 warn);让 supervisor 继续构建,
+        # 只是没有 MCP 工具可用。
+        mcp_tools = []
+        logger.warning(
+            "MCP tools unavailable; supervisor built without MCP web_search tools"
+        )
+
+    # 注册项目内置 middleware(包括 WebSearchGate,依赖 mcp_tools)
+    _register_default_middlewares()
+
     skills = load_skills("skills")
     backend = _build_backend()
     logger.info(
-        "Loaded %d subagents, %d skills, %d middlewares; backend=FilesystemBackend(root=%s, virtual=True)",
+        "Loaded %d subagents, %d skills, %d middlewares, %d mcp_tools; backend=FilesystemBackend(root=%s, virtual=True)",
         len(ALL_SUBAGENTS),
         len(skills),
         len(ALL_MIDDLEWARES),
+        len(mcp_tools),
         UPLOAD_ROOT,
     )
 
+    # consumer-provided tools:始终把 MCP 工具追加到 supervisor 的 tools 列表。
+    # 是否暴露给 LLM 由 WebSearchGateMiddleware 按 web_search_enabled 决定。
     return create_deep_agent(
         model=llm,
+        tools=mcp_tools,
         system_prompt=settings.supervisor_system_prompt,
         subagents=ALL_SUBAGENTS,
         skills=skills,

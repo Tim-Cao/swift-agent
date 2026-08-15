@@ -43,6 +43,28 @@
         :disabled="disabled || uploading"
         @keydown.enter.exact.prevent="submit"
       />
+      <!-- 联网搜索开关:按钮组形式,选中态 = primary;由 WebSearchGateMiddleware
+           按 enable_web_search 决定是否把 MCP 工具暴露给 LLM。 -->
+      <el-button-group class="search-toggle">
+        <el-button
+          :type="webSearchEnabled ? 'primary' : 'default'"
+          :disabled="disabled || uploading"
+          @click="webSearchEnabled = true"
+          title="允许主智能体通过 MCP 调用联网搜索工具"
+        >
+          <el-icon class="btn-icon"><Connection /></el-icon>
+          <span>联网</span>
+        </el-button>
+        <el-button
+          :type="!webSearchEnabled ? 'primary' : 'default'"
+          :disabled="disabled || uploading"
+          @click="webSearchEnabled = false"
+          title="关闭联网搜索,仅基于已有知识回答"
+        >
+          <el-icon class="btn-icon"><Document /></el-icon>
+          <span>本地</span>
+        </el-button>
+      </el-button-group>
       <el-button
         type="primary"
         :loading="disabled || uploading"
@@ -58,7 +80,7 @@
 <script setup>
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, UploadFilled } from '@element-plus/icons-vue'
+import { Document, UploadFilled, Connection } from '@element-plus/icons-vue'
 import { uploadZip } from '../api/uploads'
 
 const props = defineProps({
@@ -69,6 +91,9 @@ const emit = defineEmits(['send', 'attachment-cleared'])
 
 const text = ref('')
 const uploading = ref(false)
+// 联网搜索开关:默认关闭。emit 给父组件时一并带上,由后端 WebSearchGateMiddleware
+// 按本轮 enable_web_search 决定是否把 MCP 工具暴露给 LLM。
+const webSearchEnabled = ref(false)
 /**
  * attachment: {
  *   name: string,            // 原始文件名
@@ -135,8 +160,9 @@ function submit() {
   emit('send', {
     message: t,
     upload_dir: attachment.value?.upload_dir || null,
+    enable_web_search: webSearchEnabled.value,
   })
-  // 发送后清空输入与附件
+  // 发送后清空输入与附件(开关状态保留,符合用户预期:选择一次后持续生效)
   text.value = ''
   attachment.value = null
 }
@@ -164,6 +190,10 @@ defineExpose({ clearAttachment })
 .btn-icon {
   margin-right: 4px;
   font-size: 14px;
+}
+.search-toggle {
+  flex: 0 0 auto;
+  align-self: flex-end;
 }
 .attachment-chip {
   display: inline-flex;
