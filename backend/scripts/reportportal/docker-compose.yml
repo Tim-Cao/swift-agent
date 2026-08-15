@@ -1,0 +1,166 @@
+# ReportPortal v5 单机部署
+# 文档: https://reportportal.io/docs/deployment/on premises
+# 服务:Postgres + OpenSearch + RabbitMQ + 5 个微服务(gateway/api/analyzer/authorization/UI)
+#
+# 启动: docker compose -f docker-compose.yml up -d
+# 等待: 约 3-5 分钟(OpenSearch 启动慢)
+# 访问: http://localhost:8080  (默认账号 superadmin/erebus)
+#
+# 资源占用: 建议 Docker Desktop 分配 ≥6GB 内存
+name: reportportal
+
+services:
+
+  # ============================================================================
+  # 数据层
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: rp-postgres
+    environment:
+      POSTGRES_USER: rpuser
+      POSTGRES_PASSWORD: rppass
+      POSTGRES_DB: reportportal
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rpuser -d reportportal"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [rp-net]
+
+  opensearch:
+    image: opensearchproject/opensearch:2.18.0
+    container_name: rp-opensearch
+    environment:
+      - cluster.name=docker-cluster
+      - node.name=rp-opensearch
+      - discovery.type=single-node
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - DISABLE_SECURITY_PLUGIN=true
+      - DISABLE_INSTALL_DEMO_CONFIG=true
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q '\"status\":\"\\(yellow\\|green\\)\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+    networks: [rp-net]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: rp-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: rabbitmq
+      RABBITMQ_DEFAULT_PASS: rabbitmq
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks: [rp-net]
+
+  # ============================================================================
+  # 应用层(ReportPortal v5)
+  # ============================================================================
+  traefik:
+    image: traefik:v3.0
+    container_name: rp-traefik
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:8080"
+      - "--api.insecure=true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - uat
+      - api
+      - ui
+    networks: [rp-net]
+
+  uat:
+    image: reportportal/uat:5.10.0
+    container_name: rp-uat
+    environment:
+      - POSTGRES_USER=rpuser
+      - POSTGRES_PASSWORD=rppass
+      - POSTGRES_HOST=postgres
+      - POSTGRES_DB=reportportal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [rp-net]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.uat.rule=Host(`localhost`) && PathPrefix(`/uat`, `/uat-api`)"
+      - "traefik.http.services.uat.loadbalancer.server.port=9999"
+
+  api:
+    image: reportportal/api:5.10.0
+    container_name: rp-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+      opensearch:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RP_DB_HOST=postgres
+      - RP_DB_USER=rpuser
+      - RP_DB_PASSWORD=rppass
+      - RP_DB_NAME=reportportal
+      - RP_ELASTICSEARCH_HOST=opensearch
+      - RP_ELASTICSEARCH_PORT=9200
+      - RP_RABBITMQ_HOST=rabbitmq
+      - RP_RABBITMQ_USER=rabbitmq
+      - RP_RABBITMQ_PASSWORD=rabbitmq
+      - RP_RABBITMQ_VHOST=/
+    networks: [rp-net]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`localhost`) && PathPrefix(`/api`, `/api-internal`)"
+      - "traefik.http.services.api.loadbalancer.server.port=8585"
+
+  analyzer:
+    image: reportportal/analyzer:5.10.0
+    container_name: rp-analyzer
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      - RP_RABBITMQ_HOST=rabbitmq
+      - RP_RABBITMQ_USER=rabbitmq
+      - RP_RABBITMQ_PASSWORD=rabbitmq
+      - MINIO_ENABLED=false
+    networks: [rp-net]
+
+  ui:
+    image: reportportal/service-ui:5.10.0
+    container_name: rp-ui
+    networks: [rp-net]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ui.rule=Host(`localhost`) && PathPrefix(`/`)"
+      - "traefik.http.services.ui.loadbalancer.server.port=3000"
+
+volumes:
+  postgres-data:
+  opensearch-data:
+  rabbitmq-data:
+
+networks:
+  rp-net:
+    driver: bridge

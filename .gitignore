@@ -49,3 +49,8 @@ frontend/.env.local
 *.log
 logs/
 .claude/
+
+# Test reports(本地生成,不提交)
+backend/reports/
+allure-results/
+allure-report/
