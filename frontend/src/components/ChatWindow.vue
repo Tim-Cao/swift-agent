@@ -91,6 +91,15 @@ function setView(id) {
 const props = defineProps({
   messages: { type: Array, required: true },
   sessionId: { type: String, default: null },
+  /**
+   * 重新加载计数。
+   *
+   * 为什么需要:切会话时 ``store.currentId`` 可能是**同一个** id
+   * (比如新对话页发完消息跳过来,newSession 已经把 currentId 设成这个 id 了),
+   * 这时 watch(() => props.sessionId) 不会触发,localMessages 就一直是空的。
+   * 父组件每重新加载一次就 +1,这里跟 sessionId 一起 watch。
+   */
+  reloadKey: { type: Number, default: 0 },
 })
 const emit = defineEmits(['appendMessage'])
 
@@ -116,7 +125,7 @@ const localMessages = ref([])
 
 // 切会话时同步消息
 watch(
-  () => props.sessionId,
+  () => [props.sessionId, props.reloadKey],
   () => {
     localMessages.value = (props.messages || []).map((m) => ({
       ...m,
