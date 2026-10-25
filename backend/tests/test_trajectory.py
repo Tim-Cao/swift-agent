@@ -455,3 +455,78 @@ async def test_reader_in_progress_turn_has_no_ended_reason(log_root):
     # steps 仍然完整折叠出来
     assert len(turn.steps) == 1
     assert turn.steps[0].kind == "assistant_message"
+
+# --------------------------------------------------------------------------- #
+# v11.4:system_prompt 的 agent_name / tool_ids + user_message 的 source
+# --------------------------------------------------------------------------- #
+
+
+async def test_system_prompt_carries_agent_name_and_tool_ids(log_root):
+    """system_prompt 事件里的 agent_name / tool_ids 要透传到折叠结果。
+
+    前端「工具」标签页据此把 tool_ids 换成工具名 / 描述。
+    """
+    w = SessionLogWriter("s", root=log_root)
+    await w.open()
+    await w.append("system_prompt", {
+        "content": "PROMPT",
+        "reason": "initial",
+        "agent_name": "Supervisor",
+        "tool_ids": ["tool_a", "tool_b"],
+    })
+    await w.close()
+
+    reader = SessionLogReader("s", root=log_root)
+    traj = await reader.read()
+    sp = traj.system_prompts[0]
+    assert sp.agent_name == "Supervisor"
+    assert sp.tool_ids == ["tool_a", "tool_b"]
+
+
+async def test_system_prompt_without_tool_ids_is_empty_list(log_root):
+    """老 JSONL(没有 tool_ids / agent_name)→ 空值,前端走回退路径,不报错。"""
+    w = SessionLogWriter("s", root=log_root)
+    await w.open()
+    await w.append("system_prompt", {"content": "PROMPT", "reason": "initial"})
+    await w.close()
+
+    reader = SessionLogReader("s", root=log_root)
+    traj = await reader.read()
+    sp = traj.system_prompts[0]
+    assert sp.agent_name is None
+    assert sp.tool_ids == []
+
+
+async def test_user_message_carries_source(log_root):
+    """user_message 事件里的 source(客户端调用信息)要落到 turn 上。"""
+    src = {
+        "kind": "user",
+        "rpcId": "3a459cdc-5241-4a95-92c4-626c0049215c",
+        "clientTimeZone": "Asia/Shanghai",
+    }
+    w = SessionLogWriter("s", root=log_root)
+    await w.open()
+    await w.append("turn_start", {"turn": 0})
+    await w.append("user_message", {"content": "hi", "source": src})
+    await w.append("turn_end", {"turn": 0, "reason": "normal"})
+    await w.close()
+
+    reader = SessionLogReader("s", root=log_root)
+    traj = await reader.read()
+    turn = traj.turns[0]
+    assert turn.user_message == "hi"
+    assert turn.user_message_source == src
+
+
+async def test_user_message_without_source_is_none(log_root):
+    """老 JSONL(没有 source)→ user_message_source 为 None,前端显示"未记录"。"""
+    w = SessionLogWriter("s", root=log_root)
+    await w.open()
+    await w.append("turn_start", {"turn": 0})
+    await w.append("user_message", {"content": "hi"})
+    await w.append("turn_end", {"turn": 0, "reason": "normal"})
+    await w.close()
+
+    reader = SessionLogReader("s", root=log_root)
+    traj = await reader.read()
+    assert traj.turns[0].user_message_source is None
