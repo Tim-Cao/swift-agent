@@ -211,6 +211,8 @@ def _fold_system_prompts(events: list[SessionEvent]) -> list[SystemPromptRecord]
                 time=evt.time,
                 content=content,
                 reason=reason,
+                agent_name=(d.get("agent_name") or None),
+                tool_ids=[str(t) for t in (d.get("tool_ids") or [])],
             )
         )
     return records
@@ -269,6 +271,10 @@ def _fold_to_turns(events: list[SessionEvent]) -> list[TrajectoryTurn]:
             if current is not None:
                 content = str(d.get("content", ""))
                 current.user_message = content
+                # v11.4:客户端调用信息 {kind, rpcId, clientTimeZone}
+                src = d.get("source")
+                if isinstance(src, dict) and src:
+                    current.user_message_source = dict(src)
 
         elif et == "assistant_chunk":
             turn = current_turn_index
