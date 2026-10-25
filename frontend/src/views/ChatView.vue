@@ -4,23 +4,6 @@
 
   <!-- 指定了会话 → 普通对话视图 -->
   <div v-else class="chat-page">
-    <div class="agent-bar">
-      <span class="bar-label">使用智能体</span>
-      <el-select
-        :model-value="store.currentSession?.agent_id || ''"
-        class="agent-select"
-        placeholder="默认 supervisor"
-        clearable
-        @change="onAgentChange"
-      >
-        <el-option
-          v-for="a in agents"
-          :key="a.id"
-          :label="a.name"
-          :value="a.id"
-        />
-      </el-select>
-    </div>
     <ChatWindow
       :messages="store.messages"
       :session-id="store.currentId"
@@ -36,12 +19,10 @@ import { ElMessage } from 'element-plus'
 import { useSessionStore } from '../stores/session'
 import NewChatView from './NewChatView.vue'
 import ChatWindow from '../components/ChatWindow.vue'
-import { listAgents } from '../api/agents'
 import { useRoute } from '../router'
 
 const store = useSessionStore()
 const { path, query, navigate } = useRoute()
-const agents = ref([])
 
 /** URL 里的会话 id(/chat/:id);没有就是新对话页 */
 const sessionId = computed(() => {
@@ -59,12 +40,8 @@ const sessionId = computed(() => {
 const reloadKey = ref(0)
 
 onMounted(async () => {
-  try {
-    agents.value = await listAgents()
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '加载智能体失败')
-  }
   // 从智能体市场点进来:?agent=<id> → 新建绑定该 agent 的会话,跳到该会话
+  // (会话页本身不再提供切换智能体的入口 —— 选 agent 只在落地页 / 市场发生)
   const wanted = query.value.agent
   if (wanted) {
     const s = await store.newSession({ agent_id: wanted })
@@ -95,18 +72,6 @@ watch(
   { immediate: true },
 )
 
-async function onAgentChange(agentId) {
-  if (!store.currentId) {
-    await store.newSession()
-  }
-  try {
-    await store.setAgent(store.currentId, agentId || null)
-    ElMessage.success(agentId ? '已切换智能体' : '已恢复默认智能体')
-  } catch (e) {
-    ElMessage.error(e?.response?.data?.detail || '切换失败')
-  }
-}
-
 function appendLocal(msg) {
   // 临时展示消息(后端最终会通过 list_messages 返回完整记录)
   store.pushMessage(msg)
@@ -121,22 +86,5 @@ function appendLocal(msg) {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-.agent-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--n-gap-sm);
-  padding: var(--n-gap-sm) var(--n-gap-lg);
-  border-bottom: 1px solid var(--n-border-light);
-  background: var(--n-bg);
-  flex-shrink: 0;
-}
-.bar-label {
-  font-size: var(--n-text-xs);
-  color: var(--n-text-tertiary);
-  flex-shrink: 0;
-}
-.agent-select {
-  width: 220px;
 }
 </style>
