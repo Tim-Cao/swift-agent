@@ -12,6 +12,7 @@ import MarketView from './views/MarketView.vue'
 import AgentsView from './views/AgentsView.vue'
 import AgentEditorView from './views/AgentEditorView.vue'
 import ToolsView from './views/ToolsView.vue'
+import ModelsView from './views/ModelsView.vue'
 import { matchRoute, useRoute } from './router'
 
 const { path } = useRoute()
@@ -21,6 +22,7 @@ const routes = {
   '/market': MarketView,
   '/agents': AgentsView,
   '/tools': ToolsView,
+  '/models': ModelsView,
 }
 
 const currentView = computed(() => {
