@@ -1,6 +1,36 @@
 <template>
   <div class="chat-window">
-    <div class="messages" ref="scrollRef">
+    <div class="chat-header">
+      <div class="chat-header-title">
+        <span class="title-text">会话工作区</span>
+        <el-tooltip
+          v-if="props.sessionId"
+          :content="props.sessionId"
+          placement="bottom"
+          effect="dark"
+        >
+          <span class="session-id">{{ props.sessionId }}</span>
+        </el-tooltip>
+      </div>
+    </div>
+
+    <!-- Tab 行:参考 deepseek-harness 的 ConversationSession tabs -->
+    <div v-if="props.sessionId" class="tabs" role="tablist">
+      <button
+        v-for="tab in tabs"
+        :key="tab.id"
+        type="button"
+        role="tab"
+        :aria-selected="activeView === tab.id"
+        :class="['tab', { 'tab-active': activeView === tab.id }]"
+        @click="setView(tab.id)"
+      >
+        {{ tab.label }}
+      </button>
+    </div>
+
+    <!-- 内容区:根据 activeView 切换 -->
+    <div v-show="activeView === 'chat'" class="messages" ref="scrollRef">
       <div v-if="!localMessages.length" class="empty">开始一次对话吧 👋</div>
       <MessageBubble
         v-for="m in localMessages"
@@ -11,7 +41,14 @@
         :pending="isPending(m)"
       />
     </div>
+
+    <div v-show="activeView === 'trajectory'" class="trajectory-pane">
+      <TrajectoryView :session-id="props.sessionId" :active="activeView === 'trajectory'" />
+    </div>
+
+    <!-- 输入条只在 chat tab 下显示 -->
     <InputBar
+      v-if="activeView === 'chat'"
       ref="inputBarRef"
       :disabled="isStreaming"
       :session-id="sessionId"
@@ -21,10 +58,34 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import MessageBubble from './MessageBubble.vue'
 import InputBar from './InputBar.vue'
+import TrajectoryView from './TrajectoryView.vue'
 import { useChat } from '../stores/chat'
+
+// Tab 配置(参考 deepseek-harness 的 conversation.view slot 投影;
+// 后续若加新视图,只在这里 push 一项即可)
+const tabs = [
+  { id: 'chat', label: '对话' },
+  { id: 'trajectory', label: '轨迹' },
+]
+
+// 每个 session 独立记录当前选中的 tab(参考 deepseek ChatStoreState.view)
+// 用 Map 持久化,切回老会话保留之前选择
+const sessionView = ref(new Map())
+
+const activeView = computed(() => {
+  if (!props.sessionId) return 'chat'
+  return sessionView.value.get(props.sessionId) || 'chat'
+})
+
+function setView(id) {
+  if (!props.sessionId) return
+  sessionView.value.set(props.sessionId, id)
+  // 触发响应式
+  sessionView.value = new Map(sessionView.value)
+}
 
 const props = defineProps({
   messages: { type: Array, required: true },
@@ -52,11 +113,10 @@ function nextId() {
 
 const localMessages = ref([])
 
-// 切会话时同步
+// 切会话时同步消息
 watch(
   () => props.sessionId,
   () => {
-    // 切到新会话 / 切回老会话:用父组件 store 的 messages 重新初始化
     localMessages.value = (props.messages || []).map((m) => ({
       ...m,
       id: m.id || nextId(),
@@ -101,7 +161,6 @@ function appendTokenLocal(text) {
   const arr = localMessages.value
   const last = arr[arr.length - 1]
   if (!last || last.role !== 'assistant') return
-  // immutable replace:用全新对象替换最后一条,V diff 必触发 MessageBubble 重渲染
   const updated = {
     ...last,
     content: (last.content || '') + text,
@@ -153,16 +212,95 @@ async function onSend(payload) {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #fafafa;
+  background: var(--n-bg);
 }
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--n-gap-sm) var(--n-gap-lg);
+  background: var(--n-bg);
+  border-bottom: 1px solid var(--n-border-light);
+  min-height: 40px;
+}
+.chat-header-title {
+  display: flex;
+  align-items: baseline;
+  gap: var(--n-gap);
+  min-width: 0;
+}
+.title-text {
+  font-size: var(--n-text-sm);
+  font-weight: 600;
+  color: var(--n-text);
+}
+.session-id {
+  font-size: var(--n-text-xs);
+  color: var(--n-text-tertiary);
+  font-family: var(--n-font-mono);
+  user-select: all;
+  word-break: break-all;
+  max-width: 100%;
+}
+
+/* Tab strip:Notion 风格 —— 纯文字 / 13px / 500 / 下方 2px 蓝线 */
+.tabs {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: var(--n-gap-lg);
+  padding: 0 var(--n-gap-lg);
+  background: var(--n-bg);
+  border-bottom: 1px solid var(--n-border-light);
+}
+.tab {
+  position: relative;
+  padding: 0 0 9px;
+  border: none;
+  background: transparent;
+  font-size: var(--n-text-sm);
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--n-text-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+}
+.tab:hover {
+  color: var(--n-text-secondary);
+}
+.tab::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+.tab-active {
+  color: var(--n-text);
+}
+.tab-active::after {
+  background: var(--n-accent);
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px;
+  padding: var(--n-gap-lg) var(--n-gap-xl);
 }
 .empty {
   text-align: center;
-  color: #aaa;
+  color: var(--n-text-tertiary);
+  font-size: var(--n-text-sm);
   margin-top: 60px;
+}
+
+/* 轨迹 tab 的内容区:沿用 messages 的滚动与边距 */
+.trajectory-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--n-gap-lg) var(--n-gap-xl);
 }
 </style>
