@@ -21,18 +21,15 @@ import logging
 import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+# .env 的加载已经挪到 app.services.mcp_config(import 它就会 load 一次),
+# 密钥注入统一走那里的 inject_secrets。
+from app.services.mcp_config import inject_secrets
+
 logger = logging.getLogger(__name__)
 
-# 加载项目根 .env(backend/.env)到 os.environ,使 LLM_API_KEY / MINIMAX_API_HOST
-# 等 secret 在 MCP 子进程启动前可用。pydantic_settings 只在构造 Settings 实例
-# 时按需读 env,不会污染全局 os.environ,这里显式 load 一次。
-_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
-if _ENV_PATH.exists():
-    load_dotenv(_ENV_PATH, override=False)
 
 # 默认 MCP 配置文件路径:backend/.mcp.json(只作为 DB 播种的来源 / 兜底)
 _DEFAULT_MCP_CONFIG = Path(__file__).resolve().parents[2] / ".mcp.json"
@@ -54,28 +51,6 @@ def _load_config(path: Path) -> dict:
     return servers
 
 
-def _inject_secrets(server_cfg: dict) -> dict:
-    """从环境变量注入密钥,不修改原 dict。
-
-    - `LLM_API_KEY`(已存在 .env)→ MINIMAX_API_KEY
-    - `MINIMAX_API_HOST`(可选,默认 minimaxi.com)→ MINIMAX_API_HOST
-    """
-    cfg = dict(server_cfg)
-    env = dict(cfg.get("env") or {})
-
-    api_key = env.get("MINIMAX_API_KEY") or os.environ.get("LLM_API_KEY", "")
-    if api_key and "MINIMAX_API_KEY" not in env:
-        env["MINIMAX_API_KEY"] = api_key
-
-    if "MINIMAX_API_HOST" not in env:
-        env["MINIMAX_API_HOST"] = os.environ.get(
-            "MINIMAX_API_HOST", "https://api.minimaxi.com"
-        )
-
-    cfg["env"] = env
-    return cfg
-
-
 async def _load_db_connections() -> tuple[dict[str, dict], list[tuple[str, str, str]]]:
     """从 mcp_servers 表读出启用的 server。
 
@@ -85,7 +60,7 @@ async def _load_db_connections() -> tuple[dict[str, dict], list[tuple[str, str, 
     """
     from app.db import catalog_repository as cat
     from app.db.base import get_session_factory
-    from app.services.mcp_config import to_client_config
+    from app.services.mcp_config import inject_secrets, to_client_config
 
     factory = get_session_factory()
     async with factory() as db:
@@ -95,7 +70,7 @@ async def _load_db_connections() -> tuple[dict[str, dict], list[tuple[str, str, 
         for obj in objs:
             if not obj.enabled:
                 continue
-            connections[obj.name] = _inject_secrets(to_client_config(obj))
+            connections[obj.name] = inject_secrets(to_client_config(obj))
             records.append((obj.id, obj.name, obj.transport))
     return connections, records
 
@@ -149,7 +124,7 @@ async def init_mcp(config_path: Path | str | None = None) -> list[BaseTool]:
             _tools = []
             _tool_names = frozenset()
             return _tools
-        connections = {name: _inject_secrets(cfg) for name, cfg in servers.items()}
+        connections = {name: inject_secrets(cfg) for name, cfg in servers.items()}
         logger.info("MCP 配置来自文件 %s", path)
 
     logger.info("Initializing MCP client with servers: %s", list(connections))

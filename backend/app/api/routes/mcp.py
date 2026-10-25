@@ -66,6 +66,29 @@ def _check_transport(transport: str) -> None:
         )
 
 
+def _describe_error(exc: BaseException) -> str:
+    """把异常压成一句人话。
+
+    MCP 客户端用 TaskGroup 包着连接,失败时抛的是 ExceptionGroup,
+    ``str(e)`` 只有 "unhandled errors in a TaskGroup (1 sub-exception)" 这种
+    没有任何信息量的话,真正的错因(比如子进程启动就报
+    "MINIMAX_API_KEY environment variable is required")被埋在
+    ``exceptions`` 里。这里一路剥到最深处的那个异常再取它的信息。
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        # ExceptionGroup / TaskGroup:剥到子异常
+        subs = getattr(cur, "exceptions", None)
+        if isinstance(subs, (list, tuple)) and subs:
+            cur = subs[0]
+            continue
+        break
+    text = str(cur).strip() if cur is not None else ""
+    return (text or str(exc))[:500]
+
+
 @router.get("", response_model=list[MCPServerOut])
 async def list_mcp(db: AsyncSession = Depends(get_db)) -> list[MCPServerOut]:
     objs = await cat.list_mcp_servers(db)
@@ -134,7 +157,9 @@ async def test_mcp(server_id: str, db: AsyncSession = Depends(get_db)) -> dict:
 
     from langchain_mcp_adapters.client import MultiServerMCPClient
 
-    cfg = mc.to_client_config(obj)
+    # 必须注入密钥:stdio 子进程要靠 MINIMAX_API_KEY 才能起来
+    # (和启动装载路径 app/core/mcp.py 走同一个 inject_secrets)
+    cfg = mc.inject_secrets(mc.to_client_config(obj))
     try:
         client = MultiServerMCPClient({obj.name: cfg})
         tools = await client.get_tools()
@@ -149,7 +174,7 @@ async def test_mcp(server_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         await db.commit()
         return {"ok": True, "tools": names}
     except Exception as e:  # noqa: BLE001
-        detail = str(e)[:500]
+        detail = _describe_error(e)
         logger.warning("[mcp] 测试 %s 失败: %s", obj.name, detail)
         await cat.update_mcp_server(
             db,
