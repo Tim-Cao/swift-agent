@@ -15,6 +15,10 @@ v8.10 改动:
   - 捕获异常时区分"上游 LLM provider 临时错误"和"业务错误":
     上游 5xx / 网络断 / 超时 → 给前端友好提示"上游 LLM 服务暂时不可用,请稍后重试";
     业务错误保持原样
+
+v11 改动:
+  - agent 全部由 DB 驱动:会话绑定的 agent_id,或 is_default 的默认 agent,
+    运行时按记录动态构建(见 app/services/agent_service.py)。
 """
 
 from __future__ import annotations
@@ -32,7 +36,7 @@ from app.services.session_service import (
     create_default_session,
     rename_if_first_user_message,
 )
-from app.supervisor.builder import get_supervisor, make_thread_config
+from app.supervisor.thread import make_thread_config
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +138,35 @@ async def ensure_session(
     return new.id, True
 
 
+async def resolve_agent_for_session(db: AsyncSession, session_id: str) -> Any | None:
+    """按会话绑定的 agent_id 构建 agent;没有绑定则用默认 agent。
+
+    v11:agent 的元数据全在 DB 里(草稿 / 发布两份 config),
+    解析逻辑见 app/services/agent_service.py。
+    """
+    from app.services.agent_service import resolve_agent_for_session as _resolve
+
+    return await _resolve(db, session_id)
+
+
+async def _build_bare_agent() -> Any:
+    """DB 里没有可用 agent 时的兜底:一个不带提示词 / 工具的裸 agent。
+
+    正常情况下启动时的 seed 会保证至少有一个 agent;这里只是防止
+    「agent 表被清空 → 聊天接口 500」。
+    """
+    from app.core.config import get_settings
+    from app.supervisor.agent_runtime import build_agent
+    from middlewares import build_middlewares
+
+    settings = get_settings()
+    return build_agent(
+        name="(未配置智能体)",
+        system_prompt=settings.supervisor_system_prompt,
+        middleware=build_middlewares(),
+    )
+
+
 async def stream_chat(
     db: AsyncSession,
     session_id: str,
@@ -169,7 +202,11 @@ async def stream_chat(
     # 2. 调用 supervisor:input 只传本轮增量 user message。
     #    历史 messages 由 LangGraph 从 checkpointer 还原 + deepagents 的
     #    DeltaChannel._messages_delta_reducer 按 ID 去重合并。
-    agent = get_supervisor()
+    # v11:agent 全部由 DB 驱动 —— 会话绑定的 agent,或默认 agent。
+    agent = await resolve_agent_for_session(db, session_id)
+    if agent is None:
+        # DB 里一条 agent 都没有(全新库 / 用户全删了)→ 用裸 agent 兜底
+        agent = await _build_bare_agent()
     config = make_thread_config(session_id)
     delta_input = {"messages": [HumanMessage(content=llm_message)]}
 

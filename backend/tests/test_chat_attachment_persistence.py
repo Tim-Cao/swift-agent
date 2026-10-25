@@ -85,7 +85,8 @@ async def test_stream_chat_persists_attachments_in_meta(tmp_path):
         ])
 
         with patch(
-            "app.services.chat_service.get_supervisor", return_value=fake_agent,
+            "app.services.chat_service.resolve_agent_for_session",
+            return_value=fake_agent,
         ):
             from app.services.chat_service import stream_chat
 
@@ -148,7 +149,8 @@ async def test_stream_chat_persists_attachment_only_message(tmp_path):
         fake_agent = _make_fake_agent([f"saved {xlsx}"])
 
         with patch(
-            "app.services.chat_service.get_supervisor", return_value=fake_agent,
+            "app.services.chat_service.resolve_agent_for_session",
+            return_value=fake_agent,
         ):
             from app.services.chat_service import stream_chat
 
@@ -192,7 +194,8 @@ async def test_stream_chat_no_attachment_meta_is_none():
     fake_agent = _make_fake_agent(["你好", ",", "世界"])
 
     with patch(
-        "app.services.chat_service.get_supervisor", return_value=fake_agent,
+        "app.services.chat_service.resolve_agent_for_session",
+            return_value=fake_agent,
     ):
         from app.services.chat_service import stream_chat
 

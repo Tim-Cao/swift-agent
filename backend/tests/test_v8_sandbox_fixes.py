@@ -18,7 +18,7 @@ import pandas as pd
 import pytest
 
 from app.core.config import get_settings
-from subagents import ALL_SUBAGENTS
+from app.db.seed_data.excel_pipeline import CHILDREN
 from tools import TOOLKIT
 from tools import excel_pipeline as _excel_pipeline  # noqa: F401  触发 4 个 tool 注册
 
@@ -148,10 +148,15 @@ def test_pd_safe_read_csv_rejects_non_whitelisted_path(csv_dir):
 
 
 def _get_agent(name: str) -> dict:
-    for a in ALL_SUBAGENTS:
+    """按名字取 Excel 流水线子 agent 的种子配置。
+
+    v11:子 agent 变成 DB 记录,提示词文本放在 app/db/seed_data/ 里。
+    v11.2:名字去掉了 "ExcelPipeline." 前缀,这里是精确匹配。
+    """
+    for a in CHILDREN:
         if a["name"] == name:
             return a
-    raise AssertionError(f"agent {name} not registered")
+    raise AssertionError(f"agent {name} not in seed data")
 
 
 def test_intake_agent_prompt_mentions_allowed_files():

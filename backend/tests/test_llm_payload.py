@@ -87,3 +87,40 @@ class TestEnvOverride:
     def test_env_blank_is_ignored(self, monkeypatch):
         monkeypatch.setenv("LLM_THINKING_TYPE", "   ")
         assert env_thinking_override() is None
+
+
+class TestNoHardcodedDisabled:
+    """回归:代码里不能再出现硬编码的 thinking disabled(注释里提到不算)。"""
+
+    def test_agent_runtime_has_no_hardcoded_disabled(self):
+        import ast
+        import inspect
+
+        from app.supervisor import agent_runtime, llm
+
+        for mod in (agent_runtime, llm):
+            tree = ast.parse(inspect.getsource(mod))
+            # 收集所有 docstring 的位置,跳过它们(注释里提到 disabled 无妨)
+            docstrings = set()
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                    body = getattr(node, "body", None)
+                    if body and isinstance(body[0], ast.Expr) and isinstance(
+                        body[0].value, ast.Constant
+                    ) and isinstance(body[0].value.value, str):
+                        docstrings.add(id(body[0].value))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Constant):
+                    continue
+                if not isinstance(node.value, str):
+                    continue
+                if id(node) in docstrings:
+                    continue
+                assert '"disabled"' not in node.value, (
+                    f"{mod.__name__} 还在硬编码 thinking disabled"
+                )
+
+    def test_m3_1_flash_never_gets_disabled(self):
+        # 之前出 400 的那个模型,现在必须拿到 adaptive
+        body = thinking_extra_body(model="MiniMax-M3.1-Flash", base_url=MINIMAX)
+        assert body["thinking"]["type"] != "disabled"

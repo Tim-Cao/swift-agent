@@ -27,7 +27,7 @@ def test_chat_request_rejects_empty():
 
 
 def test_make_thread_config():
-    from app.supervisor.builder import make_thread_config
+    from app.supervisor.thread import make_thread_config
 
     cfg = make_thread_config("thread-42")
     assert cfg == {"configurable": {"thread_id": "thread-42"}}
