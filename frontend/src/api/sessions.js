@@ -2,6 +2,9 @@ import http from './http'
 
 export const listSessions = () => http.get('/sessions').then((r) => r.data)
 
+/** 取单个会话(含 agent_id) */
+export const getSession = (id) => http.get(`/sessions/${id}`).then((r) => r.data)
+
 export const createSession = (payload = {}) =>
   http.post('/sessions', payload).then((r) => r.data)
 
