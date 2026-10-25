@@ -55,6 +55,15 @@
             <i class="bi bi-file-earmark-zip"></i>
             {{ uploadedName }}
           </span>
+          <!-- 智能体选择:紧挨发送按钮 -->
+          <AgentSelect
+            v-if="showAgentSelect"
+            :model-value="agentId"
+            :agents="agents"
+            :loading="agentsLoading"
+            :disabled="disabled || uploading"
+            @update:model-value="onAgentChange"
+          />
           <IconButton
             icon="bi-arrow-up"
             variant="primary"
@@ -72,6 +81,7 @@
 import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import IconButton from './IconButton.vue'
+import AgentSelect from './AgentSelect.vue'
 import { uploadZip } from '../api/uploads'
 
 const props = defineProps({
@@ -85,8 +95,20 @@ const props = defineProps({
    * 返回 session id 即可。
    */
   ensureSession: { type: Function, default: null },
+  /**
+   * 是否显示智能体选择框。
+   *
+   * 只有新对话页需要(会话页已经绑定好 agent 了,不让中途换)。
+   */
+  showAgentSelect: { type: Boolean, default: false },
+  /** 智能体列表(新对话页传进来) */
+  agents: { type: Array, default: () => [] },
+  /** 智能体列表加载中 */
+  agentsLoading: { type: Boolean, default: false },
+  /** 当前选中的 agent id(空串 = 不绑定) */
+  agentId: { type: String, default: '' },
 })
-const emit = defineEmits(['send'])
+const emit = defineEmits(['send', 'update:agentId'])
 
 const text = ref('')
 const uploading = ref(false)
@@ -154,6 +176,11 @@ async function customUpload(option) {
   } finally {
     uploading.value = false
   }
+}
+
+/** 选了智能体 → 抛给父组件(新对话页据此建会话 / 换绑定) */
+function onAgentChange(id) {
+  emit('update:agentId', id)
 }
 
 function submit() {
