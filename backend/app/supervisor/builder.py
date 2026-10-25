@@ -63,7 +63,7 @@ def _build_agent() -> Any:
     llm = build_chat_model(settings.llm)
 
     # 拉取扩展内容
-    from middlewares import ALL_MIDDLEWARES
+    from middlewares import build_middlewares
     from skills import load_skills
     from subagents import ALL_SUBAGENTS
 
@@ -72,12 +72,13 @@ def _build_agent() -> Any:
     from tools import excel_pipeline  # noqa: F401
 
     skills = load_skills("skills")
+    middlewares = build_middlewares()
     backend = _build_backend()
     logger.info(
         "Loaded %d subagents, %d skills, %d middlewares; backend=FilesystemBackend(root=%s, virtual=True)",
         len(ALL_SUBAGENTS),
         len(skills),
-        len(ALL_MIDDLEWARES),
+        len(middlewares),
         UPLOAD_ROOT,
     )
 
@@ -86,7 +87,7 @@ def _build_agent() -> Any:
         system_prompt=settings.supervisor_system_prompt,
         subagents=ALL_SUBAGENTS,
         skills=skills,
-        middleware=ALL_MIDDLEWARES,
+        middleware=middlewares,
         # state_schema / context_schema 均不传(默认 DeepAgentState + ContextT=None)
         checkpointer=get_checkpointer(),
         store=get_store(),

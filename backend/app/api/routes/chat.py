@@ -69,7 +69,13 @@ async def stream_chat_endpoint(
         if body.upload_dir:
             message = f"[UPLOAD_DIR:{body.upload_dir}] {body.message}".strip()
         try:
-            async for event in stream_chat(db, session_id, message, upload_dir=body.upload_dir):
+            async for event in stream_chat(
+                db,
+                session_id,
+                message,
+                upload_dir=body.upload_dir,
+                enable_web_search=body.enable_web_search,
+            ):
                 yield _format_sse(event)
                 await asyncio.sleep(0)
         except asyncio.CancelledError:

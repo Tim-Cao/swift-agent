@@ -139,6 +139,7 @@ async def stream_chat(
     session_id: str,
     user_message: str,
     upload_dir: str | None = None,
+    enable_web_search: bool = False,
 ) -> AsyncIterator[dict[str, Any]]:
     """流式生成前端 SSE 契约事件(后由 chat.py 渲染为 SSE 行)。
 
@@ -152,6 +153,8 @@ async def stream_chat(
 
     upload_dir: 若前端附带(/api/uploads 返回的 upload_dir),会作为
       [UPLOAD_DIR:...] 前缀加到 message 里,让 supervisor 识别为 Excel 流水线。
+    enable_web_search: 联网搜索开关,True 时 MCP 工具对 LLM 可见,False 时
+      由 WebSearchGateMiddleware 在 awrap_model_call 里剔除。
     """
     # 0. 若有 upload_dir,加 [UPLOAD_DIR:...] 前缀
     llm_message = user_message
@@ -178,7 +181,16 @@ async def stream_chat(
         # 调度子 Agent 时 25 个 graph node 不够用(IntakeAgent → RuleParserAgent
         # → DataProcessingAgent → ExcelWriterAgent 一轮大约 8-12 个 node,
         # 连续重试 2-3 轮就会 GraphRecursionError)
-        stream_config = {**config, "recursion_limit": 50}
+        # v8.15:把 web_search_enabled 透传到 configurable,
+        # WebSearchGateMiddleware 在 awrap_model_call 里读这个 flag。
+        stream_config = {
+            **config,
+            "recursion_limit": 50,
+            "configurable": {
+                **config.get("configurable", {}),
+                "web_search_enabled": enable_web_search,
+            },
+        }
         async for raw in agent.astream_events(
             delta_input,
             config=stream_config,
