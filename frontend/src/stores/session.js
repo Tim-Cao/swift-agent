@@ -6,6 +6,7 @@ import {
   deleteSession as apiDelete,
   renameSession as apiRename,
   listMessages as apiMessages,
+  setSessionAgent as apiSetAgent,
 } from '../api/sessions'
 
 export const useSessionStore = defineStore('session', () => {
@@ -19,20 +20,31 @@ export const useSessionStore = defineStore('session', () => {
 
   async function loadSessions() {
     sessions.value = await listSessions()
-    // v8.13:刷新页面时,如果有历史会话且当前没有选中,默认选中第一个,
-    // 这样刷新后能直接看到上次的对话内容(否则 messages 是空的,
-    // 用户会以为刷新把历史"清空"了)。
-    if (!currentId.value && sessions.value.length > 0) {
-      await selectSession(sessions.value[0].id)
-    }
+    // v11.3:不再自动选中第一个会话 —— 首页是「新对话」页,
+    // 自动选中会把上次的内容直接摊开,跟豆包 / DeepSeek 的落地页不一致。
+    // 想看历史就点侧边栏的会话。
   }
 
-  async function newSession() {
-    const s = await apiCreate({ title: '新会话' })
+  /** 回到「新对话」状态:清掉当前会话 */
+  function resetCurrent() {
+    currentId.value = null
+    messages.value = []
+  }
+
+  async function newSession(extra = {}) {
+    const s = await apiCreate({ title: '新会话', ...extra })
     sessions.value.unshift(s)
     currentId.value = s.id
     messages.value = []
     return s
+  }
+
+  /** 切换会话使用的 agent(agentId 传 null = 恢复默认 supervisor) */
+  async function setAgent(id, agentId) {
+    const updated = await apiSetAgent(id, agentId)
+    const idx = sessions.value.findIndex((s) => s.id === id)
+    if (idx !== -1) sessions.value[idx] = updated
+    return updated
   }
 
   async function selectSession(id) {
@@ -108,7 +120,9 @@ export const useSessionStore = defineStore('session', () => {
     messages,
     currentSession,
     loadSessions,
+    resetCurrent,
     newSession,
+    setAgent,
     selectSession,
     removeSession,
     rename,

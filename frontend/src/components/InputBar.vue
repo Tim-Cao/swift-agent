@@ -77,6 +77,14 @@ import { uploadZip } from '../api/uploads'
 const props = defineProps({
   disabled: { type: Boolean, default: false },
   sessionId: { type: String, default: null },
+  /**
+   * 上传文件前先拿到 session id。
+   *
+   * 新对话页在用户还没发消息时没有会话,但上传 zip 需要 session_id
+   * (后端按 session 分目录解压)。父组件传这个函数,上传前先建会话,
+   * 返回 session id 即可。
+   */
+  ensureSession: { type: Function, default: null },
 })
 const emit = defineEmits(['send'])
 
@@ -124,7 +132,12 @@ function beforeUpload(file) {
 async function customUpload(option) {
   uploading.value = true
   try {
-    const res = await uploadZip(option.file, props.sessionId || undefined)
+    // 上传前先确保有会话(新对话页此时可能还没建会话)
+    let sid = props.sessionId
+    if (!sid && props.ensureSession) {
+      sid = await props.ensureSession()
+    }
+    const res = await uploadZip(option.file, sid || undefined)
     attachment.value = {
       name: option.file.name,
       session_id: res.session_id,
