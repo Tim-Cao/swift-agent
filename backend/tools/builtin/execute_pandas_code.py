@@ -429,4 +429,4 @@ def execute_pandas_code(
     }
 
 
-register_tool("execute_pandas_code", execute_pandas_code)
+register_tool("execute_pandas_code", execute_pandas_code, display_name="执行 pandas 代码", builtin=True)

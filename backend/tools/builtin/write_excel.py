@@ -97,4 +97,4 @@ def write_excel(
     }
 
 
-register_tool("write_excel", write_excel)
+register_tool("write_excel", write_excel, display_name="写 Excel", builtin=True)
