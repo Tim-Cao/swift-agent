@@ -4,6 +4,7 @@
     - 桌面端常驻 inline panel
     - 根据 cell.kind 渲染不同内容
     - header 有 × 关闭按钮(等价再点同一 cell)
+    - system / user 两类 cell 有标签页(见 tabList)
   -->
   <aside class="details-pane">
     <header class="details-pane-header">
@@ -17,20 +18,107 @@
       </button>
     </header>
 
+    <!-- 标签页(Notion 风格细条) -->
+    <nav v-if="tabList.length" class="detail-tabs" role="tablist">
+      <button
+        v-for="t in tabList"
+        :key="t.id"
+        type="button"
+        role="tab"
+        :aria-selected="activeTab === t.id"
+        :class="['detail-tab', { 'detail-tab-active': activeTab === t.id }]"
+        @click="activeTab = t.id"
+      >
+        {{ t.label }}
+        <span v-if="t.count != null" class="detail-tab-count">{{ t.count }}</span>
+      </button>
+    </nav>
+
     <div class="details-pane-body">
-      <!-- ============ System prompt ============ -->
-      <template v-if="cell.kind === 'system' && cell.sp">
-        <div class="detail-block">
-          <div class="detail-label">系统提示词({{ cell.sp.content.length }} 字符)</div>
-          <pre class="prompt-pre">{{ cell.sp.content }}</pre>
+      <!-- ============ System prompt · 系统提示词 ============ -->
+      <template v-if="isSystem && activeTab === 'prompt'">
+        <pre class="prompt-plain">{{ cell.sp.content }}</pre>
+      </template>
+
+      <!-- ============ System prompt · 工具 ============ -->
+      <template v-else-if="isSystem && activeTab === 'tools'">
+        <div v-if="resolvedTools.length" class="tool-list">
+          <div v-for="t in resolvedTools" :key="t.id" class="tool-item">
+            <div class="tool-head">
+              <i class="bi bi-tools tool-icon"></i>
+              <span class="tool-name">{{ t.display_name || t.name }}</span>
+              <el-tag v-if="t.builtin" size="small" type="info" effect="plain">内置</el-tag>
+            </div>
+            <div class="tool-meta">
+              <code class="meta-val">{{ t.name }}</code>
+            </div>
+            <div v-if="t.description" class="tool-desc">{{ t.description }}</div>
+          </div>
+        </div>
+        <div v-else class="empty-body">
+          {{ toolEmptyHint }}
         </div>
       </template>
 
-      <!-- ============ User message ============ -->
-      <template v-else-if="cell.kind === 'user-message'">
+      <!-- ============ User message · 概述 ============ -->
+      <template v-else-if="isUser && activeTab === 'overview'">
         <div class="detail-block">
-          <div class="detail-label">用户消息</div>
-          <div class="user-message-body">{{ cell.content }}</div>
+          <div class="detail-label">概述</div>
+          <div class="meta-row">
+            <span class="meta-key">轮次</span>
+            <span class="meta-val">Turn {{ (cell.turn ?? 0) + 1 }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">字符数</span>
+            <span class="meta-val">{{ userContent.length }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">行数</span>
+            <span class="meta-val">{{ userLineCount }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-key">来源</span>
+            <span class="meta-val">{{ source ? '已记录' : '未记录' }}</span>
+          </div>
+        </div>
+      </template>
+
+      <!-- ============ User message · 预览 ============ -->
+      <template v-else-if="isUser && activeTab === 'preview'">
+        <MarkdownView v-if="userContent" :content="userContent" />
+        <div v-else class="empty-body">(空内容)</div>
+      </template>
+
+      <!-- ============ User message · 原始内容 ============ -->
+      <template v-else-if="isUser && activeTab === 'raw'">
+        <pre class="prompt-pre">{{ userContent }}</pre>
+      </template>
+
+      <!-- ============ User message · 来源 ============ -->
+      <template v-else-if="isUser && activeTab === 'source'">
+        <template v-if="source">
+          <div class="detail-block">
+            <div class="detail-label">客户端调用信息</div>
+            <div class="meta-row">
+              <span class="meta-key">kind</span>
+              <code class="meta-val">{{ source.kind ?? '—' }}</code>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key">rpcId</span>
+              <code class="meta-val">{{ source.rpcId ?? '—' }}</code>
+            </div>
+            <div class="meta-row">
+              <span class="meta-key">clientTimeZone</span>
+              <code class="meta-val">{{ source.clientTimeZone ?? '—' }}</code>
+            </div>
+          </div>
+          <div class="detail-block">
+            <div class="detail-label">原始 JSON</div>
+            <pre class="prompt-pre">{{ formatJson(source) }}</pre>
+          </div>
+        </template>
+        <div v-else class="empty-body">
+          该消息没有记录来源信息(旧会话或客户端未上报)
         </div>
       </template>
 
@@ -112,11 +200,23 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import MarkdownView from './MarkdownView.vue'
 
 const props = defineProps({
   cell: { type: Object, required: true },
+  /**
+   * 全部工具列表(tools 表的记录)。
+   *
+   * 「工具」标签页据此把 system_prompt 事件里记的 tool_ids 换成
+   * 工具的展示名 / 描述。父组件(TrajectoryView)加载一次传进来。
+   */
+  tools: { type: Array, default: () => [] },
+  /**
+   * 回退用的 tool_ids(老会话的 system_prompt 事件没记 tool_ids)。
+   * 父组件按「会话绑定的 agent → agent 配置」解析出来。
+   */
+  fallbackToolIds: { type: Array, default: () => [] },
 })
 
 const emit = defineEmits(['close'])
@@ -164,6 +264,88 @@ const cellKindIcon = computed(() => {
   }
   return null
 })
+
+// ----- 标签页 -----
+
+const isSystem = computed(() => props.cell.kind === 'system' && !!props.cell.sp)
+const isUser = computed(() => props.cell.kind === 'user-message')
+
+const userContent = computed(() => props.cell?.content ?? '')
+const userLineCount = computed(() => {
+  const c = userContent.value
+  if (!c) return 0
+  return c.split('\n').length
+})
+const source = computed(() => props.cell?.source || null)
+
+/**
+ * 「工具」标签页的工具列表。
+ *
+ * 数据来源(后端记录 + 前端回退):
+ * - 优先用 system_prompt 事件里记的 tool_ids(v11.4 起写入)
+ * - 老会话没有 tool_ids → 用父组件按「会话绑定的 agent」解析出来的
+ *   fallbackToolIds
+ * tool_ids 可能是工具 id,也可能是注册名 —— 两种都能对上。
+ */
+const resolvedTools = computed(() => {
+  if (!isSystem.value) return []
+  const ids = props.cell.sp?.tool_ids?.length
+    ? props.cell.sp.tool_ids
+    : props.fallbackToolIds
+  if (!ids?.length) return []
+  const byId = new Map()
+  const byName = new Map()
+  for (const t of props.tools) {
+    byId.set(t.id, t)
+    byName.set(t.name, t)
+  }
+  const out = []
+  const seen = new Set()
+  for (const raw of ids) {
+    const key = String(raw)
+    const t = byId.get(key) || byName.get(key)
+    if (!t || seen.has(t.id)) continue
+    seen.add(t.id)
+    out.push(t)
+  }
+  return out
+})
+
+const toolEmptyHint = computed(() => {
+  const ids = props.cell?.sp?.tool_ids
+  if (ids?.length) return '记录的工具 id 在工具表里没有对应记录'
+  return '该系统提示词没有绑定工具'
+})
+
+/**
+ * 标签页配置。切 cell 时重置到第一个标签页。
+ */
+const tabList = computed(() => {
+  if (isSystem.value) {
+    return [
+      { id: 'prompt', label: '系统提示词' },
+      { id: 'tools', label: '工具', count: resolvedTools.value.length },
+    ]
+  }
+  if (isUser.value) {
+    return [
+      { id: 'overview', label: '概述' },
+      { id: 'preview', label: '预览' },
+      { id: 'raw', label: '原始内容' },
+      { id: 'source', label: '来源' },
+    ]
+  }
+  return []
+})
+
+const activeTab = ref('prompt')
+watch(
+  () => props.cell,
+  () => {
+    activeTab.value = tabList.value[0]?.id || ''
+  },
+  { immediate: true },
+)
 
 // ----- helpers -----
 
@@ -256,6 +438,60 @@ function formatLatency(ms) {
   color: var(--n-text);
 }
 
+/* ----- 标签页(Notion 风格细条) ----- */
+.detail-tabs {
+  display: flex;
+  gap: var(--n-gap);
+  padding: 0 var(--n-gap);
+  background: var(--n-bg);
+  border-bottom: 1px solid var(--n-border-light);
+  flex-shrink: 0;
+}
+.detail-tab {
+  position: relative;
+  padding: 7px 0 8px;
+  border: none;
+  background: transparent;
+  font-size: var(--n-text-xs);
+  line-height: 16px;
+  font-weight: 500;
+  color: var(--n-text-tertiary);
+  cursor: pointer;
+  font-family: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.detail-tab:hover {
+  color: var(--n-text-secondary);
+}
+.detail-tab::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: transparent;
+}
+.detail-tab-active {
+  color: var(--n-text);
+}
+.detail-tab-active::after {
+  background: var(--n-accent);
+}
+.detail-tab-count {
+  font-family: var(--n-font-mono);
+  font-size: 10px;
+  color: var(--n-text-tertiary);
+  background: var(--n-bg-code);
+  border-radius: var(--n-radius-sm);
+  padding: 0 4px;
+  line-height: 14px;
+}
+
 /* ----- Body ----- */
 .details-pane-body {
   flex: 1;
@@ -319,7 +555,11 @@ function formatLatency(ms) {
   font-size: var(--n-text-xs);
 }
 
-/* pre 块:prompt / input / output / file meta */
+/*
+  pre 块:prompt / input / output / file meta
+  注意:这里**不设** max-height / overflow-y —— 整个详情面板只保留
+  .details-pane-body 一条竖向滚动条,内部不再嵌套滚动区。
+*/
 .prompt-pre {
   background: var(--n-bg-code);
   border: 1px solid var(--n-border-light);
@@ -332,8 +572,55 @@ function formatLatency(ms) {
   color: var(--n-text);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 600px;
-  overflow-y: auto;
+}
+
+/* 系统提示词正文:无边框、无背景块,跟正文一体 */
+.prompt-plain {
+  margin: 0;
+  font-family: var(--n-font-mono);
+  font-size: var(--n-text-xs);
+  line-height: 1.65;
+  color: var(--n-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ----- 工具列表(系统提示词的「工具」标签页) ----- */
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n-gap-sm);
+}
+.tool-item {
+  border: 1px solid var(--n-border-light);
+  border-radius: var(--n-radius);
+  padding: var(--n-gap-sm) var(--n-gap);
+  background: var(--n-bg-card);
+}
+.tool-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.tool-icon {
+  color: var(--n-text-tertiary);
+  font-size: 12px;
+}
+.tool-name {
+  font-size: var(--n-text-sm);
+  font-weight: 600;
+  color: var(--n-text);
+}
+.tool-meta {
+  margin-bottom: 3px;
+}
+.tool-desc {
+  font-size: var(--n-text-xs);
+  color: var(--n-text-secondary);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* User message body */
