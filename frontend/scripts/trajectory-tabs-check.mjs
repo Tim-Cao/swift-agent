@@ -107,7 +107,7 @@ await waitFor('.step-row')
 const headerCount = await evaluate(`document.querySelectorAll('.trajectory-header').length`)
 check('轨迹视图无元信息区域', headerCount === 0, `.trajectory-header x${headerCount}`)
 
-// ---------- ④ 浮动工具条存在 ----------
+// ---------- ④ 浮动工具条存在(只剩「下载 JSONL」,刷新按钮已移除) ----------
 const toolbar = await evaluate(`
   (() => {
     const bar = document.querySelector('.floating-toolbar')
@@ -119,8 +119,8 @@ const toolbar = await evaluate(`
   })()
 `)
 check(
-  '浮动工具条存在(刷新 + 下载)',
-  !!toolbar && toolbar.buttons === 2,
+  '浮动工具条只剩「下载 JSONL」',
+  !!toolbar && toolbar.buttons === 1 && (toolbar.tips[0] || '').includes('下载'),
   toolbar ? JSON.stringify(toolbar.tips) : '未找到 .floating-toolbar',
 )
 

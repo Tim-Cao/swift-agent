@@ -13,14 +13,6 @@
       <div class="empty-actions">
         <IconButton
           v-if="sessionId"
-          icon="bi-arrow-clockwise"
-          variant="primary"
-          title="刷新"
-          :loading="loading"
-          @click="onReload"
-        />
-        <IconButton
-          v-if="sessionId"
           icon="bi-download"
           title="下载原始 JSONL"
           @click="onExport"
@@ -35,18 +27,12 @@
     -->
     <div v-else class="trajectory-pane" :class="{ 'has-details': !!selectedCell }">
       <!--
-        浮动工具条:会话元信息区域已移除,只把两个操作按钮留成右上角的
-        浮动图标条(刷新 / 下载 JSONL)。
+        浮动工具条:会话元信息区域已移除,只把「下载 JSONL」留成右上角的
+        浮动图标条。
         它浮在 timeline **上方**(绝对定位),所以左栏要留出它的高度,
         免得盖住第一行。
       -->
       <div class="floating-toolbar">
-        <IconButton
-          small
-          icon="bi-arrow-clockwise"
-          title="刷新"
-          @click="onReload"
-        />
         <IconButton
           small
           icon="bi-download"
@@ -386,10 +372,6 @@ async function loadFallbackToolIds() {
   } catch {
     fallbackToolIds.value = []
   }
-}
-
-async function onReload() {
-  await load()
 }
 
 function onExport() {
