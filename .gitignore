@@ -49,3 +49,17 @@ frontend/.env.local
 *.log
 logs/
 .claude/
+
+# Test reports(本地生成,不提交)
+backend/reports/
+allure-results/
+allure-report/
+
+# test-viewer 本地克隆(第三方代码,跟随自己的 LICENSE,本地直接 node 启动)
+backend/scripts/test-viewer/
+
+# ReportPortal 源码构建(克隆下来的 5+ 子模块,跟着 Apache 2.0,不提交)
+backend/scripts/reportportal/source/
+
+# ReportPortal 构建产物工具链(JDK / Gradle / Go / Maven / Python venv,共 2.2G)
+backend/scripts/reportportal/tools/
