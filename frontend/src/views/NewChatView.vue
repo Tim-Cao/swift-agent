@@ -1,44 +1,11 @@
 <template>
   <div class="new-chat">
     <div class="new-chat-inner">
-      <!-- 有消息了 → 变成普通对话视图(去掉 hero 和选择器) -->
+      <!-- 有消息了 → 变成普通对话视图(去掉 hero) -->
       <template v-if="!messages.length">
         <div class="hero">
           <h1 class="hero-title">有什么可以帮你的?</h1>
           <p class="hero-sub">选一个智能体,或者直接开始对话。</p>
-        </div>
-
-        <!-- 智能体选择 -->
-        <div class="picker">
-          <div class="picker-label">选择智能体</div>
-          <div class="picker-row">
-            <!-- 默认(不绑定具体 agent) -->
-            <button
-              type="button"
-              class="agent-chip"
-              :class="{ active: !pickedAgentId }"
-              @click="pickAgent('')"
-            >
-              <i class="bi bi-stars chip-icon"></i>
-              <span class="chip-name">默认</span>
-            </button>
-
-            <button
-              v-for="a in agents"
-              :key="a.id"
-              type="button"
-              class="agent-chip"
-              :class="{ active: pickedAgentId === a.id }"
-              @click="pickAgent(a.id)"
-            >
-              <i class="bi bi-robot chip-icon"></i>
-              <span class="chip-name">{{ a.name }}</span>
-            </button>
-
-            <span v-if="!agents.length && loading" class="picker-empty">
-              正在加载智能体…
-            </span>
-          </div>
         </div>
       </template>
 
@@ -62,6 +29,11 @@
           :session-id="sessionId"
           :ensure-session="ensureSession"
           :disabled="isStreaming"
+          show-agent-select
+          :agents="agents"
+          :agents-loading="loading"
+          :agent-id="pickedAgentId"
+          @update:agent-id="pickAgent"
           @send="onSend"
         />
       </div>
@@ -248,64 +220,6 @@ defineExpose({ ensureSession })
   margin: 0;
   font-size: var(--n-text-sm);
   color: var(--n-text-tertiary);
-}
-
-/* ---- 智能体选择 ---- */
-.picker-label {
-  font-size: var(--n-text-xs);
-  font-weight: 600;
-  color: var(--n-text-tertiary);
-  letter-spacing: 0.02em;
-  margin-bottom: var(--n-gap-sm);
-  text-align: center;
-}
-.picker-row {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--n-gap-sm);
-}
-.picker-empty {
-  font-size: var(--n-text-sm);
-  color: var(--n-text-tertiary);
-}
-
-.agent-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  border: 1px solid var(--n-border);
-  border-radius: 999px;
-  background: var(--n-bg-card);
-  color: var(--n-text-secondary);
-  font-family: inherit;
-  font-size: var(--n-text-sm);
-  cursor: pointer;
-  transition:
-    background-color 0.12s ease,
-    border-color 0.12s ease,
-    color 0.12s ease;
-}
-.agent-chip:hover {
-  border-color: var(--n-border-strong);
-  color: var(--n-text);
-}
-.agent-chip.active {
-  background: var(--n-accent-bg);
-  border-color: var(--n-accent-border);
-  color: var(--n-accent);
-  font-weight: 500;
-}
-.chip-icon {
-  font-size: 13px;
-  opacity: 0.8;
-}
-.chip-name {
-  white-space: nowrap;
-  max-width: 160px;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 /* ---- 消息区 ---- */
