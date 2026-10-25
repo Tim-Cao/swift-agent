@@ -33,76 +33,30 @@
       - 左 .timeline-pane:常驻,可滚动,放头部 + timeline
       - 右 .details-pane-container:有选中 cell 时挂载 <TrajectoryDetailsPanel>
     -->
-    <div v-else class="trajectory-pane">
-      <div class="timeline-pane">
-        <!-- 头部:会话元信息 + summary -->
-        <div class="trajectory-header">
-          <div class="header-title">
-            <span class="header-kind-text">会话元信息</span>
-            <span class="header-summary-hint">
-              {{ trajectory.summary.turns }} turns · {{ trajectory.summary.steps }} steps
-            </span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-label">会话 ID</span>
-            <code class="meta-val session-id-full">{{ sessionIdFull }}</code>
-          </div>
-          <div class="meta-row">
-            <span class="meta-label">模型</span>
-            <span class="meta-val">{{ trajectory.session.model || '—' }}</span>
-          </div>
-          <div class="meta-row">
-            <span class="meta-label">创建</span>
-            <span class="meta-val">{{ formatTime(trajectory.session.created_at) }}</span>
-          </div>
-          <div class="summary-grid">
-            <div class="stat">
-              <div class="stat-num">{{ trajectory.summary.turns }}</div>
-              <div class="stat-label">turns</div>
-            </div>
-            <div class="stat">
-              <div class="stat-num">{{ trajectory.summary.steps }}</div>
-              <div class="stat-label">steps</div>
-            </div>
-            <div class="stat">
-              <div class="stat-num">{{ formatTokens(trajectory.summary.total_input_tokens) }}</div>
-              <div class="stat-label">input tok</div>
-            </div>
-            <div class="stat">
-              <div class="stat-num">{{ formatTokens(trajectory.summary.total_output_tokens) }}</div>
-              <div class="stat-label">output tok</div>
-            </div>
-          </div>
-          <div v-if="trajectory.summary.tool_calls?.length" class="tool-stats">
-            <span class="meta-label">工具调用</span>
-            <el-tag
-              v-for="t in trajectory.summary.tool_calls"
-              :key="t.name"
-              :type="t.error_count ? 'danger' : 'info'"
-              size="small"
-              effect="plain"
-            >
-              {{ t.name }} ×{{ t.count }}
-              <span v-if="t.error_count" class="err-count">({{ t.error_count }} 错)</span>
-            </el-tag>
-          </div>
-          <div class="header-actions">
-            <IconButton
-              small
-              icon="bi-arrow-clockwise"
-              title="刷新"
-              @click="onReload"
-            />
-            <IconButton
-              small
-              icon="bi-download"
-              variant="primary"
-              title="下载 JSONL"
-              @click="onExport"
-            />
-          </div>
-        </div>
+    <div v-else class="trajectory-pane" :class="{ 'has-details': !!selectedCell }">
+      <!--
+        浮动工具条:会话元信息区域已移除,只把两个操作按钮留成右上角的
+        浮动图标条(刷新 / 下载 JSONL)。
+        它浮在 timeline **上方**(绝对定位),所以左栏要留出它的高度,
+        免得盖住第一行。
+      -->
+      <div class="floating-toolbar">
+        <IconButton
+          small
+          icon="bi-arrow-clockwise"
+          title="刷新"
+          @click="onReload"
+        />
+        <IconButton
+          small
+          icon="bi-download"
+          variant="primary"
+          title="下载 JSONL"
+          @click="onExport"
+        />
+      </div>
 
+      <div class="timeline-pane">
         <!--
           Timeline:扁平事件流(参考 deepseek-harness TrajectoryTable)。
           数据模型仍是 turn → steps,渲染层把所有"事件"(system / user /
@@ -209,6 +163,8 @@
         <div v-if="selectedCell" class="details-pane-container">
           <TrajectoryDetailsPanel
             :cell="selectedCell"
+            :tools="tools"
+            :fallback-tool-ids="fallbackToolIds"
             @close="clearSelection"
           />
         </div>
@@ -221,6 +177,9 @@
 import { ref, watch, computed, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { getTrajectory, exportSessionLog } from '../api/trajectory'
+import { listTools } from '../api/tools'
+import { getAgent } from '../api/agents'
+import { getSession } from '../api/sessions'
 import IconButton from './IconButton.vue'
 import TrajectoryStepItem from './TrajectoryStepItem.vue'
 import TrajectoryDetailsPanel from './TrajectoryDetailsPanel.vue'
@@ -236,8 +195,10 @@ const loading = ref(false)
 const trajectory = ref(null)
 // 单选模式(对齐 deepseek selectedRecordId):保存当前选中的 cell item
 const selectedCell = ref(null)
-
-const sessionIdFull = computed(() => props.sessionId || '')
+// tools 表全量(「工具」标签页把 tool_ids 换成工具名 / 描述)
+const tools = ref([])
+// 老会话的 system_prompt 事件没记 tool_ids → 按会话绑定的 agent 回退解析
+const fallbackToolIds = ref([])
 
 /**
  * 把 system_prompts 跟 turns 合并成一个扁平事件序列(对齐 deepseek
@@ -283,6 +244,7 @@ const timelineItems = computed(() => {
       items.push({
         kind: 'user-message',
         content: turn.user_message,
+        source: turn.user_message_source || null,
         firstOfTurn: !turnStartAssigned,
         ...turnMeta,
       })
@@ -386,11 +348,43 @@ async function load() {
     trajectory.value = await getTrajectory(props.sessionId)
     // 切换会话时清空选中
     selectedCell.value = null
+    // 工具列表 + 老会话的 tool_ids 回退(互不依赖,失败不挡轨迹展示)
+    loadTools()
+    loadFallbackToolIds()
   } catch (e) {
     ElMessage.error(`加载轨迹失败:${e?.response?.data?.detail || e?.message || e}`)
     trajectory.value = null
   } finally {
     loading.value = false
+  }
+}
+
+/** 拉 tools 表全量 —— 「工具」标签页用来把 tool_ids 换成工具名 / 描述 */
+async function loadTools() {
+  try {
+    tools.value = await listTools()
+  } catch {
+    tools.value = []
+  }
+}
+
+/**
+ * 老会话回退:system_prompt 事件没记 tool_ids 时,按会话绑定的 agent
+ * 的配置解析出它绑定了哪些工具。
+ */
+async function loadFallbackToolIds() {
+  fallbackToolIds.value = []
+  try {
+    const session = await getSession(props.sessionId)
+    const agentId = session?.agent_id
+    if (!agentId) return
+    const agent = await getAgent(agentId)
+    const cfg = agent?.published
+      ? agent.published_config
+      : agent?.draft_config
+    fallbackToolIds.value = cfg?.tool_ids || []
+  } catch {
+    fallbackToolIds.value = []
   }
 }
 
@@ -475,12 +469,6 @@ function promptChangeLabel(reason) {
   return 'System Prompt'
 }
 
-function formatTime(epochSeconds) {
-  if (!epochSeconds) return '—'
-  const d = new Date(epochSeconds * 1000)
-  return d.toLocaleString()
-}
-
 function formatDuration(start, end) {
   if (!start || !end) return ''
   const ms = Math.round((end - start) * 1000)
@@ -489,13 +477,6 @@ function formatDuration(start, end) {
   const m = Math.floor(ms / 60_000)
   const s = Math.round((ms % 60_000) / 1000)
   return `${m}m ${s}s`
-}
-
-function formatTokens(n) {
-  if (!n && n !== 0) return '—'
-  if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(1)}k`
-  return `${(n / 1_000_000).toFixed(2)}M`
 }
 
 function turnReasonLabel(reason) {
@@ -516,6 +497,10 @@ function turnTagType(reason) {
 <style scoped>
 .trajectory-view {
   padding: 0;
+  /* 撑满外层(.chat-window 的 trajectory-pane)—— 双栏布局要的是
+     「左栏可滚 + 右栏抽屉贴满高度」,高度塌成内容高度会让抽屉只剩一小条 */
+  height: 100%;
+  min-height: 0;
 }
 
 /* ============== Loading / Empty ============== */
@@ -544,7 +529,8 @@ function turnTagType(reason) {
   flex: 1;
   min-width: 0;
   overflow-y: auto;
-  padding: 0 4px;
+  /* 顶部留出浮动工具条的位置(工具条绝对定位在它上面) */
+  padding: 38px 4px 0;
   transition: margin-right 0.25s ease;
 }
 
@@ -576,89 +562,24 @@ function turnTagType(reason) {
   opacity: 0;
 }
 
-/* ============== Header ============== */
-.trajectory-header {
-  background: var(--n-bg-card);
-  border: 1px solid var(--n-border);
-  border-radius: var(--n-radius-lg);
-  padding: var(--n-gap) var(--n-gap);
-  margin-bottom: var(--n-gap-md);
-}
-.header-title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--n-gap-sm);
-  margin-bottom: var(--n-gap-sm);
-}
-.header-kind-text {
-  font-size: var(--n-text-sm);
-  font-weight: 600;
-  color: var(--n-text);
-}
-.header-summary-hint {
-  font-size: var(--n-text-xs);
-  color: var(--n-text-tertiary);
-}
-.meta-row {
+/* ============== 浮动工具条 ============== */
+/* 会话元信息区域已移除;刷新 / 下载 JSONL 收成右上角的浮动图标条 */
+.floating-toolbar {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  z-index: 20;
   display: flex;
   align-items: center;
-  gap: var(--n-gap-sm);
-  font-size: var(--n-text-xs);
-  margin-bottom: 3px;
+  gap: var(--n-gap-xs);
+  padding: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--n-bg) 88%, transparent);
+  backdrop-filter: blur(6px);
 }
-.meta-label {
-  color: var(--n-text-tertiary);
-  min-width: 56px;
-}
-.meta-val {
-  color: var(--n-text);
-  font-family: var(--n-font-mono);
-}
-.session-id-full {
-  font-size: var(--n-text-xs);
-  user-select: all;
-  word-break: break-all;
-}
-.summary-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--n-gap-sm);
-  margin: var(--n-gap) 0;
-}
-.stat {
-  background: var(--n-bg-code);
-  border: 1px solid var(--n-border-light);
-  border-radius: var(--n-radius);
-  padding: var(--n-gap-sm) 0;
-  text-align: center;
-}
-.stat-num {
-  font-size: var(--n-text-lg);
-  font-weight: 600;
-  color: var(--n-text);
-}
-.stat-label {
-  font-size: var(--n-text-xs);
-  color: var(--n-text-tertiary);
-  margin-top: 2px;
-}
-.tool-stats {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: var(--n-text-xs);
-  margin-bottom: var(--n-gap-sm);
-}
-.err-count {
-  color: var(--n-red);
-  margin-left: 2px;
-}
-.header-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--n-gap-sm);
-  margin-top: var(--n-gap-sm);
+/* 详情抽屉展开时,工具条往左让位,不被抽屉盖住 */
+.trajectory-pane.has-details .floating-toolbar {
+  right: calc(clamp(320px, 38%, 440px) + 8px);
 }
 
 /* ============== Timeline(扁平事件流) ============== */
