@@ -1,11 +1,13 @@
 """启动时播种 DB 元数据。
 
-v10:先把已注册的内置工具同步进 tools 表(builtin=True,前端只读)。
-v11:再把 Excel 流水线的 5 条 agent 记录播种进 agents 表
-(1 个 supervisor + 4 个子 agent),之后由「智能体管理」页维护。
-v11.3:再把 .mcp.json 里的 MCP server 播种进 mcp_servers 表,
-之后由「MCP 管理」页维护。
-播种是幂等的:按 name 查找,已存在则跳过(不覆盖用户改过的内容)。
+v11:「没有内置 agent」——agent 全部是普通 DB 记录,播种只是**第一次**
+把 Excel 流水线的 5 条记录写进去,之后完全由用户在页面上增删改。
+    - Excel 流水线(1 supervisor + 4 子 agent)→ agents 表
+    - 内置工具(tools/builtin/ 下的 4 个)→ tools 表,builtin=True(前端只读)
+    - 提供商/模型:不自动播种(用户自己在「模型管理」页配)
+
+播种是幂等的:按 name 查找,已存在则跳过(不覆盖用户改过的内容);
+用户删掉之后再重启会被重新播种回来,所以只在「表里一条都没有」时才播种 agent。
 """
 
 from __future__ import annotations
@@ -72,18 +74,6 @@ async def _tool_ids_for(db: AsyncSession, tool_names: list[str]) -> list[str]:
     return ids
 
 
-async def _tool_ids_for(db: AsyncSession, tool_names: list[str]) -> list[str]:
-    """按工具注册名换出 tool id(找不到的跳过)。"""
-    ids: list[str] = []
-    for name in tool_names:
-        t = await cat.get_tool_by_name(db, name)
-        if t is not None:
-            ids.append(t.id)
-        else:
-            logger.warning("[seed] 工具 %s 未注册,跳过绑定", name)
-    return ids
-
-
 async def seed_agents(db: AsyncSession) -> list[Agent]:
     """把 Excel 流水线播种成普通 agent 记录。
 
@@ -134,7 +124,6 @@ async def seed_agents(db: AsyncSession) -> list[Agent]:
 
     await db.flush()
     return out
-
 
 
 async def seed_all(db: AsyncSession) -> None:

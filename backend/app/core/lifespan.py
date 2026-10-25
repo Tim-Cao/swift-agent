@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
 
     logger.info("App %s starting (db=%s)", settings.app_name, settings.db.url)
     # 启动时建表(由 db 模块处理)
-    from app.db.base import get_engine, get_session_factory, init_db
+    from app.db.base import get_engine, init_db
 
     await init_db()
     logger.info("Database initialized")
@@ -41,7 +41,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:  # noqa: BLE001
         logger.warning("Additive migrations failed (continuing): %s", e)
 
-    # v11.3:播种内置元数据(工具 / MCP),让「工具管理」「MCP 管理」页有初始数据
+    # v10:播种内置元数据(工具 / agent),让「工具管理」「智能体管理」页有初始数据
+    from app.db.base import get_session_factory
     from app.db.seed import seed_all
 
     try:

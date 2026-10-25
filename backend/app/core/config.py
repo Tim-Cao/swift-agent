@@ -168,7 +168,6 @@ class AppSettings(BaseSettings):
     trajectory_log_enabled: bool = True
 
 
-
 @lru_cache
 def get_settings() -> AppSettings:
     """获取全局配置(进程内单例,@lru_cache 缓存)。"""
