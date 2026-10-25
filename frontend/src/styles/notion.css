@@ -1,0 +1,238 @@
+/**
+ * Notion 风格设计令牌 + 全局基础样式。
+ *
+ * 取自 Notion 的视觉语言:
+ *   - 近白纸面背景(#ffffff / #f7f6f3),不用纯灰
+ *   - 极细边框 rgba(55,53,47,.09 / .06),无阴影或极浅阴影
+ *   - 深灰文字 rgb(55,53,47),次级文字 rgba(55,53,47,.65)
+ *   - 强调色取 Notion 蓝 #2383e2
+ *   - 圆角小(3~6px),字号克制
+ */
+
+:root {
+  /* ---- 纸面色 ---- */
+  --n-bg: #ffffff;
+  --n-bg-sidebar: #f7f6f3;
+  --n-bg-hover: rgba(55, 53, 47, 0.06);
+  --n-bg-active: rgba(55, 53, 47, 0.1);
+  --n-bg-card: #ffffff;
+  --n-bg-code: #f7f6f3;
+
+  /* ---- 文字 ---- */
+  --n-text: rgb(55, 53, 47);
+  --n-text-secondary: rgba(55, 53, 47, 0.65);
+  --n-text-tertiary: rgba(55, 53, 47, 0.45);
+  --n-text-inverse: #ffffff;
+
+  /* ---- 边框 ---- */
+  --n-border: rgba(55, 53, 47, 0.09);
+  --n-border-strong: rgba(55, 53, 47, 0.16);
+  --n-border-light: rgba(55, 53, 47, 0.06);
+
+  /* ---- 强调色 ---- */
+  --n-accent: #2383e2;
+  --n-accent-hover: #1a6fc9;
+  --n-accent-bg: rgba(35, 131, 226, 0.1);
+  --n-accent-border: rgba(35, 131, 226, 0.35);
+
+  /* ---- 语义色 ---- */
+  --n-red: #e03e3e;
+  --n-red-bg: rgba(224, 62, 62, 0.1);
+  --n-green: #0f7b6c;
+  --n-green-bg: rgba(15, 123, 108, 0.1);
+  --n-yellow: #cb7b37;
+  --n-yellow-bg: rgba(203, 123, 55, 0.1);
+  --n-purple: #9065b0;
+  --n-purple-bg: rgba(144, 101, 176, 0.1);
+
+  /* ---- 圆角 / 阴影 ---- */
+  --n-radius-sm: 3px;
+  --n-radius: 5px;
+  --n-radius-lg: 8px;
+  --n-shadow: 0 1px 2px rgba(15, 15, 15, 0.05);
+  --n-shadow-lg: 0 4px 12px rgba(15, 15, 15, 0.1);
+
+  /* ---- 间距 ---- */
+  --n-gap-xs: 4px;
+  --n-gap-sm: 8px;
+  --n-gap: 12px;
+  --n-gap-md: 16px;
+  --n-gap-lg: 24px;
+  --n-gap-xl: 40px;
+
+  /* ---- 字号 ---- */
+  --n-text-xs: 12px;
+  --n-text-sm: 13px;
+  --n-text-base: 14px;
+  --n-text-md: 15px;
+  --n-text-lg: 17px;
+  --n-text-xl: 20px;
+  --n-text-2xl: 28px;
+
+  --n-font: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --n-font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+  /* ---- Element Plus 主题变量对齐(让 el-* 组件也是 Notion 味) ---- */
+  --el-color-primary: #2383e2;
+  --el-color-primary-light-3: #5a9fe8;
+  --el-color-primary-light-5: #8bbcee;
+  --el-color-primary-light-7: #bcd8f4;
+  --el-color-primary-light-8: #d3e5f7;
+  --el-color-primary-light-9: #e9f2fb;
+  --el-color-primary-dark-2: #1a6fc9;
+  --el-text-color-primary: rgb(55, 53, 47);
+  --el-text-color-regular: rgba(55, 53, 47, 0.85);
+  --el-text-color-secondary: rgba(55, 53, 47, 0.55);
+  --el-border-color: rgba(55, 53, 47, 0.12);
+  --el-border-color-light: rgba(55, 53, 47, 0.09);
+  --el-border-color-lighter: rgba(55, 53, 47, 0.06);
+  --el-fill-color-blank: #ffffff;
+  --el-fill-color-light: #f7f6f3;
+  --el-fill-color-lighter: #fbfaf9;
+  --el-border-radius-base: 5px;
+  --el-font-family: var(--n-font);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--n-font);
+  font-size: var(--n-text-base);
+  color: var(--n-text);
+  background: var(--n-bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--n-accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+/* ---- Notion 风格滚动条 ---- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(55, 53, 47, 0.16);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(55, 53, 47, 0.28);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---- 通用类 ---- */
+.n-page {
+  padding: var(--n-gap-xl) var(--n-gap-xl) var(--n-gap-xxl, 64px);
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.n-page-title {
+  font-size: var(--n-text-2xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 var(--n-gap-xs);
+}
+
+.n-page-subtitle {
+  font-size: var(--n-text-md);
+  color: var(--n-text-secondary);
+  margin: 0 0 var(--n-gap-lg);
+}
+
+.n-section-title {
+  font-size: var(--n-text-lg);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: var(--n-gap-lg) 0 var(--n-gap);
+}
+
+/* ---- Element Plus 细节对齐 ---- */
+.el-button {
+  font-weight: 500;
+  box-shadow: none;
+}
+.el-button--primary {
+  box-shadow: none;
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  box-shadow: 0 0 0 1px var(--n-border) inset;
+  border-radius: var(--n-radius);
+  background: var(--n-bg);
+}
+.el-input__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px var(--n-border-strong) inset;
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--n-accent) inset !important;
+}
+.el-dialog {
+  border-radius: var(--n-radius-lg);
+}
+.el-dialog__header {
+  margin-right: 0;
+  padding: var(--n-gap-md) var(--n-gap-lg) var(--n-gap-sm);
+}
+.el-dialog__title {
+  font-size: var(--n-text-lg);
+  font-weight: 600;
+}
+.el-dialog__body {
+  padding: 0 var(--n-gap-lg) var(--n-gap-md);
+}
+.el-dialog__footer {
+  padding: var(--n-gap-sm) var(--n-gap-lg) var(--n-gap-md);
+}
+.el-tag {
+  border-radius: var(--n-radius-sm);
+  font-weight: 500;
+}
+.el-card {
+  border-radius: var(--n-radius-lg);
+  border-color: var(--n-border);
+  box-shadow: none !important;
+}
+.el-message-box {
+  border-radius: var(--n-radius-lg);
+}
+.el-empty__description p {
+  color: var(--n-text-tertiary);
+}
+
+/* ---- Bootstrap Icons ----
+   按钮里的 <i class="bi ..."> 跟文字之间留一点间距;
+   纯图标按钮(没有文字)则不需要间距。 */
+.el-button > .bi {
+  margin-right: 5px;
+  font-size: 1em;
+  line-height: 1;
+  vertical-align: -0.125em;
+}
+/* 只有图标的按钮:去掉右边距 */
+.el-button > .bi:only-child {
+  margin-right: 0;
+}

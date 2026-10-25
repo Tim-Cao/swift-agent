@@ -1,9 +1,5 @@
 <template>
   <div class="session-list">
-    <div class="header">
-      <span>会话</span>
-      <el-button size="small" type="primary" @click="$emit('new')">+ 新建</el-button>
-    </div>
     <ul>
       <li
         v-for="s in sessions"
@@ -11,41 +7,40 @@
         :class="{ active: s.id === currentId }"
         @click="$emit('select', s.id)"
       >
-        <span class="title">{{ s.title }}</span>
-        <el-button
-          link
-          size="small"
-          type="danger"
+        <i class="bi bi-chat-left-text item-icon"></i>
+        <el-tooltip :content="s.title" placement="right" effect="dark">
+          <span class="title">{{ s.title }}</span>
+        </el-tooltip>
+        <IconButton
+          small
+          variant="ghost"
+          icon="bi-x-lg"
+          title="删除会话"
           @click.stop="$emit('remove', s.id)"
-        >×</el-button>
+        />
       </li>
-      <li v-if="!sessions.length" class="empty">暂无会话</li>
+      <li v-if="!sessions.length" class="empty">暂无历史会话</li>
     </ul>
   </div>
 </template>
 
 <script setup>
+import IconButton from './IconButton.vue'
+
 defineProps({
   sessions: { type: Array, required: true },
   currentId: { type: String, default: null },
 })
-defineEmits(['select', 'remove', 'new'])
+defineEmits(['select', 'remove'])
 </script>
 
 <style scoped>
 .session-list {
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  height: 100%;
-  background: #f5f7fa;
-}
-.header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 12px;
-  font-weight: 600;
-  border-bottom: 1px solid #e6e8eb;
+  background: var(--n-bg-sidebar);
 }
 ul {
   list-style: none;
@@ -53,17 +48,49 @@ ul {
   padding: 0;
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 li {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 10px 12px;
+  gap: var(--n-gap-xs);
+  padding: 5px var(--n-gap-sm) 5px var(--n-gap);
   cursor: pointer;
-  border-bottom: 1px solid #eef0f3;
+  font-size: var(--n-text-sm);
+  color: var(--n-text-secondary);
+  border-radius: var(--n-radius-sm);
+  margin: 0 var(--n-gap-xs);
+  transition: background-color 0.1s ease, color 0.1s ease;
 }
-li:hover { background: #eef2f7; }
-li.active { background: #d6e4ff; }
-.title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.empty { color: #999; text-align: center; padding: 20px; }
+li:hover {
+  background: var(--n-bg-hover);
+  color: var(--n-text);
+}
+li.active {
+  background: var(--n-bg-active);
+  color: var(--n-text);
+  font-weight: 500;
+}
+.item-icon {
+  font-size: 12px;
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty {
+  color: var(--n-text-tertiary);
+  text-align: center;
+  padding: var(--n-gap) var(--n-gap-sm);
+  font-size: var(--n-text-xs);
+  cursor: default;
+}
+.empty:hover {
+  background: transparent;
+  color: var(--n-text-tertiary);
+}
 </style>
