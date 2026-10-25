@@ -64,6 +64,7 @@ import MessageBubble from './MessageBubble.vue'
 import InputBar from './InputBar.vue'
 import TrajectoryView from './TrajectoryView.vue'
 import { useChat } from '../stores/chat'
+import { buildSource } from '../utils/request'
 
 // Tab 配置(参考 deepseek-harness 的 conversation.view slot 投影;
 // 后续若加新视图,只在这里 push 一项即可)
@@ -210,6 +211,8 @@ async function onSend(payload) {
       upload_dir: payload.upload_dir || null,
       attachment: payload.attachment || null,
       enable_web_search: !!payload.enable_web_search,
+      // 客户端调用信息 —— 轨迹视图「来源」标签页展示
+      source: buildSource(),
     },
     {
       onToken: (t) => appendTokenLocal(t),
@@ -314,10 +317,12 @@ async function onSend(payload) {
   margin-top: 60px;
 }
 
-/* 轨迹 tab 的内容区:沿用 messages 的滚动与边距 */
+/* 轨迹 tab 的内容区:滚动交给 TrajectoryView 内部的 timeline-pane,
+   外层只负责占满剩余高度(否则双栏布局的高度塌成内容高度) */
 .trajectory-pane {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   padding: var(--n-gap-lg) var(--n-gap-xl);
+  min-height: 0;
 }
 </style>

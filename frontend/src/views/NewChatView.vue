@@ -78,6 +78,7 @@ import { listAgents } from '../api/agents'
 import { useChat } from '../stores/chat'
 import { useSessionStore } from '../stores/session'
 import { useRoute } from '../router'
+import { buildSource } from '../utils/request'
 
 const store = useSessionStore()
 const { navigate } = useRoute()
@@ -188,6 +189,8 @@ async function onSend(payload) {
       upload_dir: payload.upload_dir || null,
       attachment: payload.attachment || null,
       enable_web_search: !!payload.enable_web_search,
+      // 客户端调用信息 —— 轨迹视图「来源」标签页展示
+      source: buildSource(),
     },
     {
       onToken: (t) => appendTokenLocal(t),
