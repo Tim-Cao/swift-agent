@@ -1,74 +1,90 @@
 <template>
-  <div class="input-bar">
-    <!-- 已上传 zip 提示卡 -->
-    <div v-if="attachment" class="attachment-chip">
-      <el-icon class="chip-icon"><Document /></el-icon>
-      <span class="chip-name">{{ attachment.name }}</span>
-      <span class="chip-meta">({{ formatBytes(attachment.size_bytes) }} · {{ attachment.csv_count }} CSV)</span>
-      <el-button
-        type="danger"
-        link
-        size="small"
-        @click="clearAttachment"
-      >移除</el-button>
-    </div>
-
-    <div class="input-row">
-      <!-- el-upload 触发器:用一个 el-button 做"上传 zip"入口,
-           仍支持点击选择文件(默认 slot)。el-button 比 el-icon 块更醒目,
-           也更符合用户习惯。 -->
-      <el-upload
-        :auto-upload="true"
-        :show-file-list="false"
-        :http-request="customUpload"
-        :before-upload="beforeUpload"
-        accept=".zip"
-      >
-        <el-button
-          :loading="uploading"
-          :disabled="disabled || uploading"
-          type="primary"
-          plain
-        >
-          <el-icon class="btn-icon"><UploadFilled /></el-icon>
-          <span>{{ uploading ? '上传中…' : '上传 zip' }}</span>
-        </el-button>
-      </el-upload>
-
+  <div class="composer">
+    <!--
+      整个输入区是一个盒子:上边框包住 textarea,下边框包住一排图标按钮,
+      两部分共用一条外边框(中间不断开)。图标行在底部靠右。
+    -->
+    <div class="composer-box" :class="{ 'composer-box-disabled': disabled }">
       <el-input
         v-model="text"
         type="textarea"
         :rows="3"
-        :placeholder="attachment ? '补充处理指令(基于已上传的 zip)…' : '输入消息,Enter 发送,Shift+Enter 换行'"
+        class="composer-input"
+        :placeholder="placeholder"
         :disabled="disabled || uploading"
         @keydown.enter.exact.prevent="submit"
       />
-      <el-button
-        type="primary"
-        :loading="disabled || uploading"
-        :disabled="!text.trim() || disabled || uploading"
-        @click="submit"
-      >
-        {{ disabled ? '生成中…' : '发送' }}
-      </el-button>
+
+      <div class="composer-bar">
+        <div class="bar-left">
+          <!-- 上传 zip:el-upload 的触发器 -->
+          <el-upload
+            :auto-upload="true"
+            :show-file-list="false"
+            :http-request="customUpload"
+            :before-upload="beforeUpload"
+            accept=".zip"
+          >
+            <IconButton
+              icon="bi-paperclip"
+              title="上传 zip 包"
+              :loading="uploading"
+              :disabled="disabled || uploading"
+            />
+          </el-upload>
+
+          <!-- 联网搜索开关:两个图标按钮,选中态=primary -->
+          <IconButton
+            icon="bi-globe"
+            :variant="webSearchEnabled ? 'primary' : 'ghost'"
+            title="允许联网搜索"
+            :disabled="disabled || uploading"
+            @click="webSearchEnabled = true"
+          />
+          <IconButton
+            icon="bi-hdd"
+            :variant="!webSearchEnabled ? 'primary' : 'ghost'"
+            title="仅基于已有知识回答"
+            :disabled="disabled || uploading"
+            @click="webSearchEnabled = false"
+          />
+        </div>
+
+        <div class="bar-right">
+          <span v-if="uploadedName" class="uploaded-hint">
+            <i class="bi bi-file-earmark-zip"></i>
+            {{ uploadedName }}
+          </span>
+          <IconButton
+            icon="bi-arrow-up"
+            variant="primary"
+            title="发送(Enter)"
+            :disabled="!text.trim() || disabled || uploading"
+            @click="submit"
+          />
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Document, UploadFilled } from '@element-plus/icons-vue'
+import IconButton from './IconButton.vue'
 import { uploadZip } from '../api/uploads'
 
 const props = defineProps({
   disabled: { type: Boolean, default: false },
   sessionId: { type: String, default: null },
 })
-const emit = defineEmits(['send', 'attachment-cleared'])
+const emit = defineEmits(['send'])
 
 const text = ref('')
 const uploading = ref(false)
+// 联网搜索开关:默认关闭。emit 给父组件时一并带上,由后端 WebSearchGateMiddleware
+// 按本轮 enable_web_search 决定是否把 MCP 工具暴露给 LLM。
+const webSearchEnabled = ref(false)
 /**
  * attachment: {
  *   name: string,            // 原始文件名
@@ -78,15 +94,18 @@ const uploading = ref(false)
  *   zip_path: string,
  *   size_bytes: number,
  * }
+ * 上传后随消息一起发给后端,后端写进 user 消息的 meta —— 前端在**气泡里**
+ * 渲染文件卡,刷新页面也不会丢。
  */
 const attachment = ref(null)
 
-function formatBytes(n) {
-  if (!n && n !== 0) return ''
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  return `${(n / 1024 / 1024).toFixed(2)} MB`
-}
+const uploadedName = computed(() => attachment.value?.name || '')
+
+const placeholder = computed(() =>
+  attachment.value
+    ? '补充处理指令(基于已上传的 zip)…'
+    : '输入消息,Enter 发送,Shift+Enter 换行',
+)
 
 function beforeUpload(file) {
   // 限制 100MB(后端也会再校验)
@@ -124,60 +143,94 @@ async function customUpload(option) {
   }
 }
 
-function clearAttachment() {
-  attachment.value = null
-  emit('attachment-cleared')
-}
-
 function submit() {
   const t = text.value.trim()
   if (!t || props.disabled || uploading.value) return
   emit('send', {
     message: t,
     upload_dir: attachment.value?.upload_dir || null,
+    // 附件描述随消息一起发,后端落进 user 消息的 meta.attachments
+    attachment: attachment.value
+      ? {
+          name: attachment.value.name,
+          size_bytes: attachment.value.size_bytes,
+          csv_count: attachment.value.csv_count,
+        }
+      : null,
+    enable_web_search: webSearchEnabled.value,
   })
-  // 发送后清空输入与附件
+  // 发送后清空输入(联网开关保留,符合用户预期:选择一次后持续生效)
   text.value = ''
   attachment.value = null
 }
 
-defineExpose({ clearAttachment })
 </script>
 
 <style scoped>
-.input-bar {
+.composer {
+  padding: var(--n-gap) var(--n-gap-xl) var(--n-gap-md);
+  border-top: 1px solid var(--n-border-light);
+  background: var(--n-bg);
+}
+
+/* 输入区外框:上下两块共用这一条边框 */
+.composer-box {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border-top: 1px solid #eee;
-  background: #fff;
+  border: 1px solid var(--n-border);
+  border-radius: var(--n-radius-lg);
+  background: var(--n-bg-card);
+  transition: border-color 0.12s ease;
 }
-.input-row {
+.composer-box:focus-within {
+  border-color: var(--n-accent-border);
+}
+.composer-box-disabled {
+  opacity: 0.6;
+}
+
+.composer-input :deep(.el-textarea__inner) {
+  border: none;
+  border-radius: var(--n-radius-lg) var(--n-radius-lg) 0 0;
+  box-shadow: none;
+  background: transparent;
+  padding: var(--n-gap) var(--n-gap) var(--n-gap-xs);
+  font-size: var(--n-text-md);
+  line-height: 1.6;
+  resize: none;
+  min-height: 62px;
+}
+.composer-input :deep(.el-textarea__inner:focus) {
+  box-shadow: none;
+}
+
+/* 底部图标行:跟输入框共用外框,所以自己不画边框,只跟上方留一条分隔 */
+.composer-bar {
   display: flex;
-  gap: 8px;
-  align-items: flex-end;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--n-gap-sm);
+  padding: var(--n-gap-xs) var(--n-gap-sm) var(--n-gap-sm);
+  border-top: 1px solid var(--n-border-light);
 }
-.zip-uploader {
-  flex: 0 0 auto;
+.bar-left,
+.bar-right {
+  display: flex;
+  align-items: center;
+  gap: var(--n-gap-xs);
 }
-.btn-icon {
-  margin-right: 4px;
-  font-size: 14px;
+.bar-right {
+  margin-left: auto;
 }
-.attachment-chip {
+.uploaded-hint {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: #ecf5ff;
-  border: 1px solid #b3d8ff;
-  border-radius: 4px;
-  color: #303133;
-  font-size: 13px;
-  align-self: flex-start;
+  gap: 5px;
+  font-size: var(--n-text-xs);
+  color: var(--n-text-tertiary);
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.chip-icon { color: #409eff; }
-.chip-name { font-weight: 500; }
-.chip-meta { color: #909399; font-size: 12px; }
 </style>

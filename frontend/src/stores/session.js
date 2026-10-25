@@ -48,10 +48,16 @@ export const useSessionStore = defineStore('session', () => {
     // v8.14:后端把附件存进了 Message.meta_json,list_messages 已返回 meta。
     // MessageBubble 直接读 message.attachments,所以这里把 meta.attachments
     // 拍平到顶层,让刷新/前端重启后下载按钮仍能渲染出来。
-    messages.value = msgs.map((m) => ({
-      ...m,
-      attachments: m.attachments || m.meta?.attachments || [],
-    }))
+    //
+    // v11.1:meta.attachments 里有两种东西,按 filename / name 区分:
+    //   - AI 产出的结果文件(有 filename)→ attachments
+    //   - 用户上传的文件(有 name)→ uploads(渲染成气泡里的文件卡)
+    messages.value = msgs.map((m) => {
+      const raw = m.attachments || m.meta?.attachments || []
+      const uploads = raw.filter((a) => a.name && !a.filename)
+      const downloads = raw.filter((a) => a.filename)
+      return { ...m, attachments: downloads, uploads }
+    })
     currentId.value = id
   }
 

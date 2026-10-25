@@ -39,27 +39,57 @@ const rendered = computed(() => {
 
 <style>
 .markdown-view {
-  line-height: 1.6;
+  line-height: 1.65;
   word-break: break-word;
+  color: var(--n-text);
 }
 .markdown-view pre {
-  background: #f6f8fa;
-  padding: 12px;
-  border-radius: 6px;
+  background: var(--n-bg-code);
+  border: 1px solid var(--n-border-light);
+  padding: var(--n-gap) var(--n-gap);
+  border-radius: var(--n-radius);
   overflow-x: auto;
 }
 .markdown-view code {
-  background: #f0f0f0;
-  padding: 2px 4px;
-  border-radius: 3px;
-  font-size: 0.9em;
+  background: var(--n-bg-code);
+  color: #eb5757;
+  padding: 1px 4px;
+  border-radius: var(--n-radius-sm);
+  font-family: var(--n-font-mono);
+  font-size: 0.88em;
 }
 .markdown-view pre code {
   background: transparent;
+  color: inherit;
   padding: 0;
 }
 .markdown-view ul,
 .markdown-view ol {
   padding-left: 1.5em;
+}
+.markdown-view a {
+  color: var(--n-accent);
+}
+.markdown-view table {
+  border-collapse: collapse;
+  width: 100%;
+  display: block;
+  overflow-x: auto;
+}
+.markdown-view th,
+.markdown-view td {
+  border: 1px solid var(--n-border);
+  padding: 5px 8px;
+  font-size: var(--n-text-sm);
+}
+.markdown-view th {
+  background: var(--n-bg-code);
+  font-weight: 600;
+}
+.markdown-view blockquote {
+  margin: var(--n-gap) 0;
+  padding-left: var(--n-gap);
+  border-left: 3px solid var(--n-border-strong);
+  color: var(--n-text-secondary);
 }
 </style>

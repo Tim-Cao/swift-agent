@@ -38,6 +38,7 @@
         :role="m.role"
         :content="m.content"
         :attachments="m.attachments"
+        :uploads="m.uploads"
         :pending="isPending(m)"
       />
     </div>
@@ -182,7 +183,12 @@ async function onSend(payload) {
     return
   }
   // 1. 本地立刻拿到用户消息 + 占位 assistant
-  pushLocal({ role: 'user', content: payload.message })
+  //    uploads:用户本轮上传的文件,渲染成气泡里的文件卡
+  pushLocal({
+    role: 'user',
+    content: payload.message,
+    uploads: payload.attachment ? [payload.attachment] : [],
+  })
   pushLocal({ role: 'assistant', content: '', attachments: [] })
 
   // 2. 同步告诉父组件持久化用户消息(后端流结束会自己 append 完整 assistant)
@@ -193,6 +199,8 @@ async function onSend(payload) {
       session_id: props.sessionId,
       message: payload.message,
       upload_dir: payload.upload_dir || null,
+      attachment: payload.attachment || null,
+      enable_web_search: !!payload.enable_web_search,
     },
     {
       onToken: (t) => appendTokenLocal(t),

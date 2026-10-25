@@ -19,7 +19,21 @@
         <div v-if="content" class="text">{{ content }}</div>
       </template>
 
-      <!-- 结果文件下载卡(xlsx / csv):fetch + Blob 保证浏览器触发下载
+      <!-- 用户本轮上传的文件:文件卡放在气泡里(不是输入框上方) -->
+      <div v-if="uploads.length" class="uploads">
+        <div v-for="(f, idx) in uploads" :key="idx" class="upload-card">
+          <i class="bi bi-file-earmark-zip file-icon"></i>
+          <div class="file-info">
+            <div class="file-name">{{ f.name }}</div>
+            <div class="file-meta">
+              {{ formatBytes(f.size_bytes) }}
+              <span v-if="f.csv_count">· {{ f.csv_count }} 个 CSV</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI 产出的结果文件下载卡(xlsx / csv):fetch + Blob 保证浏览器触发下载
            而不是打开预览;按钮状态有 downloading / done / error 反馈 -->
       <div v-if="attachments && attachments.length" class="attachments">
         <div
@@ -27,7 +41,7 @@
           :key="idx"
           :class="['file-card', `status-${att.status || 'idle'}`]"
         >
-          <el-icon class="file-icon"><Document /></el-icon>
+          <i class="bi bi-file-earmark file-icon"></i>
           <div class="file-info">
             <div class="file-name">{{ att.filename }}</div>
             <div class="file-meta">
@@ -38,16 +52,14 @@
               <span v-else>点击下载</span>
             </div>
           </div>
-          <el-button
-            type="primary"
+          <IconButton
+            icon="bi-download"
+            variant="primary"
+            title="下载结果"
             :loading="att.status === 'downloading'"
             :disabled="att.status === 'downloading'"
             @click="downloadFile(att, idx)"
-            class="download-btn"
-          >
-            <el-icon><Download /></el-icon>
-            <span>下载结果</span>
-          </el-button>
+          />
         </div>
       </div>
     </div>
@@ -55,9 +67,8 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { Document, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
+import IconButton from './IconButton.vue'
 import MarkdownView from './MarkdownView.vue'
 
 const props = defineProps({
@@ -70,6 +81,11 @@ const props = defineProps({
    * 父组件只需在收到 file 事件时 push 即可,不必管理 status。
    */
   attachments: { type: Array, default: () => [] },
+  /**
+   * uploads: 用户上传的文件 [{ name, size_bytes, csv_count }]
+   * 只有用户消息才有(assistant 消息的产出文件走 attachments)。
+   */
+  uploads: { type: Array, default: () => [] },
 })
 
 // downloadFile 通过 fetch 拿 blob + a 标签触发下载,避免 target=_blank 打开预览
@@ -109,30 +125,33 @@ function formatBytes(n) {
 
 <style scoped>
 .bubble {
-  margin: 12px 0;
+  margin: var(--n-gap-md) 0;
   display: flex;
   flex-direction: column;
 }
 .bubble .role-label {
-  font-size: 12px;
-  color: #888;
-  margin-bottom: 4px;
+  font-size: var(--n-text-xs);
+  color: var(--n-text-tertiary);
+  margin-bottom: var(--n-gap-xs);
 }
 .bubble.user {
   align-items: flex-end;
 }
 .bubble.user .content {
-  background: #409eff;
-  color: #fff;
-  padding: 8px 12px;
-  border-radius: 8px;
+  background: var(--n-accent-bg);
+  color: var(--n-text);
+  padding: var(--n-gap-sm) var(--n-gap);
+  border-radius: var(--n-radius-lg);
   max-width: 80%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--n-gap-sm);
 }
 .bubble.assistant .content {
-  background: #f4f4f5;
-  padding: 10px 14px;
-  border-radius: 8px;
-  max-width: 90%;
+  background: transparent;
+  padding: 0;
+  max-width: 100%;
+  width: 100%;
 }
 
 /* 三点等待动画 */
@@ -147,7 +166,7 @@ function formatBytes(n) {
   display: inline-block;
   width: 6px;
   height: 6px;
-  background: #909399;
+  background: var(--n-text-tertiary);
   border-radius: 50%;
   animation: typing-bounce 1.2s infinite ease-in-out both;
 }
@@ -164,46 +183,62 @@ function formatBytes(n) {
   0%,
   60%,
   100% {
-    transform: translateY(0);
     opacity: 0.4;
+    transform: translateY(0);
   }
   30% {
-    transform: translateY(-4px);
     opacity: 1;
+    transform: translateY(-4px);
   }
+}
+
+/* 用户上传的文件卡 */
+.uploads {
+  display: flex;
+  flex-direction: column;
+  gap: var(--n-gap-xs);
+}
+.upload-card {
+  display: flex;
+  align-items: center;
+  gap: var(--n-gap-sm);
+  padding: var(--n-gap-sm) var(--n-gap);
+  background: var(--n-bg-card);
+  border: 1px solid var(--n-border);
+  border-radius: var(--n-radius);
 }
 
 /* 结果文件下载卡 */
 .attachments {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
+  gap: var(--n-gap-sm);
+  margin-top: var(--n-gap);
 }
 .file-card {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  background: #fff;
-  border: 1px solid #e6e8eb;
-  border-left: 4px solid #409eff;
-  border-radius: 6px;
+  gap: var(--n-gap);
+  padding: var(--n-gap) var(--n-gap);
+  background: var(--n-bg-card);
+  border: 1px solid var(--n-border);
+  border-left: 3px solid var(--n-accent);
+  border-radius: var(--n-radius);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .file-card:hover {
-  border-color: #409eff;
-  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.12);
+  border-color: var(--n-accent-border);
+  box-shadow: var(--n-shadow);
 }
 .file-card.status-done {
-  border-left-color: #67c23a;
+  border-left-color: var(--n-green);
 }
 .file-card.status-error {
-  border-left-color: #f56c6c;
+  border-left-color: var(--n-red);
 }
 .file-icon {
-  font-size: 32px;
-  color: #409eff;
+  font-size: 28px;
+  color: var(--n-accent);
   flex-shrink: 0;
 }
 .file-info {
@@ -211,20 +246,14 @@ function formatBytes(n) {
   min-width: 0;
 }
 .file-name {
-  font-size: 14px;
+  font-size: var(--n-text-sm);
   font-weight: 600;
-  color: #303133;
+  color: var(--n-text);
   word-break: break-all;
 }
 .file-meta {
-  font-size: 12px;
-  color: #909399;
+  font-size: var(--n-text-xs);
+  color: var(--n-text-tertiary);
   margin-top: 2px;
-}
-.download-btn {
-  flex-shrink: 0;
-}
-.download-btn :deep(.el-icon) {
-  margin-right: 4px;
 }
 </style>
