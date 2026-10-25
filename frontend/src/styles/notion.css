@@ -17,6 +17,8 @@
   --n-bg-active: rgba(55, 53, 47, 0.1);
   --n-bg-card: #ffffff;
   --n-bg-code: #f7f6f3;
+  /* 拖拽区等"稍深一点"的底色(比 code 底还淡一档) */
+  --n-bg-subtle: #fbfaf9;
 
   /* ---- 文字 ---- */
   --n-text: rgb(55, 53, 47);
@@ -34,6 +36,8 @@
   --n-accent-hover: #1a6fc9;
   --n-accent-bg: rgba(35, 131, 226, 0.1);
   --n-accent-border: rgba(35, 131, 226, 0.35);
+  /* 强调色的浅底(拖拽区 hover 等) */
+  --n-accent-soft: rgba(35, 131, 226, 0.04);
 
   /* ---- 语义色 ---- */
   --n-red: #e03e3e;

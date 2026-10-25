@@ -8,12 +8,14 @@
 import { computed } from 'vue'
 import AppShell from './components/AppShell.vue'
 import ChatView from './views/ChatView.vue'
+import ToolsView from './views/ToolsView.vue'
 import { matchRoute, useRoute } from './router'
 
 const { path } = useRoute()
 
 const routes = {
   '/chat': ChatView,
+  '/tools': ToolsView,
 }
 
 const currentView = computed(() => {
