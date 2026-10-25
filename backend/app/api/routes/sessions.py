@@ -22,7 +22,12 @@ async def list_sessions(db: AsyncSession = Depends(get_db)) -> list[SessionOut]:
 async def create_session(
     body: SessionCreate, db: AsyncSession = Depends(get_db)
 ) -> SessionOut:
-    obj = await repo.create_session(db, title=body.title, agent_name=body.agent_name)
+    obj = await repo.create_session(
+        db,
+        title=body.title,
+        agent_name=body.agent_name,
+        agent_id=body.agent_id,
+    )
     await db.commit()
     await db.refresh(obj)
     return SessionOut.model_validate(obj)
@@ -34,9 +39,13 @@ async def update_session(
     body: SessionUpdate,
     db: AsyncSession = Depends(get_db),
 ) -> SessionOut:
-    obj = await repo.rename_session(db, session_id, body.title)
+    obj = await repo.get_session(db, session_id)
     if obj is None:
         raise HTTPException(status_code=404, detail="session not found")
+    if body.title:
+        obj = await repo.rename_session(db, session_id, body.title)
+    if body.agent_id is not None:
+        obj = await repo.set_session_agent(db, session_id, body.agent_id)
     await db.commit()
     await db.refresh(obj)
     return SessionOut.model_validate(obj)

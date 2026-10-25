@@ -13,8 +13,14 @@ from app.db.models import Message, Session
 
 # ---------- Session ----------
 
-async def create_session(db: AsyncSession, *, title: str = "新会话", agent_name: str | None = None) -> Session:
-    obj = Session(title=title, agent_name=agent_name)
+async def create_session(
+    db: AsyncSession,
+    *,
+    title: str = "新会话",
+    agent_name: str | None = None,
+    agent_id: str | None = None,
+) -> Session:
+    obj = Session(title=title, agent_name=agent_name, agent_id=agent_id)
     db.add(obj)
     await db.flush()
     return obj
@@ -35,6 +41,19 @@ async def rename_session(db: AsyncSession, session_id: str, title: str) -> Sessi
     if obj is None:
         return None
     obj.title = title
+    obj.updated_at = datetime.utcnow()
+    await db.flush()
+    return obj
+
+
+async def set_session_agent(
+    db: AsyncSession, session_id: str, agent_id: str | None
+) -> Session | None:
+    """切换会话使用的 agent(agent_id 为空表示用默认 supervisor)。"""
+    obj = await get_session(db, session_id)
+    if obj is None:
+        return None
+    obj.agent_id = agent_id
     obj.updated_at = datetime.utcnow()
     await db.flush()
     return obj

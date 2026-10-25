@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from app.api.routes import (
+    agents,
     chat,
     downloads,
     health,
@@ -23,6 +24,7 @@ api_router.include_router(messages.router, prefix="/sessions", tags=["messages"]
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(downloads.router, prefix="/downloads", tags=["downloads"])
+api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
 api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(models.providers_router, prefix="/providers", tags=["providers"])
 api_router.include_router(models.models_router, prefix="/models", tags=["models"])

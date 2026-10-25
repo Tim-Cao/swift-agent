@@ -1,6 +1,8 @@
 """启动时播种 DB 元数据。
 
 v10:先把已注册的内置工具同步进 tools 表(builtin=True,前端只读)。
+v11:再把 Excel 流水线的 5 条 agent 记录播种进 agents 表
+(1 个 supervisor + 4 个子 agent),之后由「智能体管理」页维护。
 v11.3:再把 .mcp.json 里的 MCP server 播种进 mcp_servers 表,
 之后由「MCP 管理」页维护。
 播种是幂等的:按 name 查找,已存在则跳过(不覆盖用户改过的内容)。
@@ -15,7 +17,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import catalog_repository as cat
-from app.db.models import MCPServer, Tool
+from app.db.models import Agent, MCPServer, Tool
 
 logger = logging.getLogger(__name__)
 
@@ -70,14 +72,81 @@ async def _tool_ids_for(db: AsyncSession, tool_names: list[str]) -> list[str]:
     return ids
 
 
+async def _tool_ids_for(db: AsyncSession, tool_names: list[str]) -> list[str]:
+    """按工具注册名换出 tool id(找不到的跳过)。"""
+    ids: list[str] = []
+    for name in tool_names:
+        t = await cat.get_tool_by_name(db, name)
+        if t is not None:
+            ids.append(t.id)
+        else:
+            logger.warning("[seed] 工具 %s 未注册,跳过绑定", name)
+    return ids
+
+
+async def seed_agents(db: AsyncSession) -> list[Agent]:
+    """把 Excel 流水线播种成普通 agent 记录。
+
+    只在 agents 表为空时播种一次 —— 用户之后在页面上改的提示词 / 工具绑定
+    不应该被启动流程覆盖掉。
+    """
+    from app.db.seed_data.excel_pipeline import CHILDREN, SUPERVISOR
+
+    existing = await cat.list_agents(db)
+    if existing:
+        logger.info("[seed] agents 表已有 %d 条记录,跳过 agent 播种", len(existing))
+        return existing
+
+    out: list[Agent] = []
+
+    # 1) 顶层 supervisor
+    sup_cfg = {
+        "system_prompt": SUPERVISOR.get("system_prompt", ""),
+        "tool_ids": await _tool_ids_for(db, SUPERVISOR.get("tool_names", [])),
+    }
+    supervisor = await cat.create_agent(
+        db,
+        name=SUPERVISOR["name"],
+        draft_config=sup_cfg,
+        published_config=sup_cfg,
+        published=True,
+        is_default=bool(SUPERVISOR.get("is_default")),
+    )
+    out.append(supervisor)
+    logger.info("[seed] 新增 agent %s", supervisor.name)
+
+    # 2) 子 agent(parent_id 指向 supervisor)
+    for spec in CHILDREN:
+        cfg = {
+            "system_prompt": spec.get("system_prompt", ""),
+            "tool_ids": await _tool_ids_for(db, spec.get("tool_names", [])),
+        }
+        child = await cat.create_agent(
+            db,
+            name=spec["name"],
+            draft_config=cfg,
+            published_config=cfg,
+            published=True,
+            parent_id=supervisor.id,
+        )
+        out.append(child)
+        logger.info("[seed] 新增 agent %s", child.name)
+
+    await db.flush()
+    return out
+
+
+
 async def seed_all(db: AsyncSession) -> None:
     """播种全部元数据(幂等)。"""
     tools = await seed_tools(db)
+    agents = await seed_agents(db)
     mcp_servers = await seed_mcp_servers(db)
     await db.commit()
     logger.info(
-        "[seed] 元数据就绪: %d 个工具, %d 个 MCP",
+        "[seed] 元数据就绪: %d 个工具, %d 个 agent, %d 个 MCP",
         len(tools),
+        len(agents),
         len(mcp_servers),
     )
 
@@ -151,4 +220,4 @@ async def seed_mcp_servers(db: AsyncSession) -> list[MCPServer]:
     return out
 
 
-__all__ = ["seed_tools", "seed_mcp_servers", "seed_all"]
+__all__ = ["seed_tools", "seed_agents", "seed_mcp_servers", "seed_all"]

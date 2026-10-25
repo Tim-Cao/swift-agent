@@ -36,15 +36,8 @@ def create_app() -> FastAPI:
     # 路由(单一聚合入口,前缀 /api)
     app.include_router(api_router, prefix="/api")
 
-    @app.on_event("startup")
-    async def _warmup_supervisor() -> None:
-        try:
-            from app.supervisor.builder import get_supervisor
-
-            get_supervisor()
-            logger.info("Supervisor ready")
-        except Exception as e:  # noqa: BLE001
-            logger.warning("Supervisor warmup skipped: %s", e)
+    # v11:没有硬编码的 supervisor 单例了 —— agent 全部由 DB 驱动,
+    # 运行时按记录动态构建(见 app/services/agent_service.py),无需预热。
 
     return app
 
