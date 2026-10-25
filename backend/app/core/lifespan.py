@@ -23,9 +23,19 @@ async def lifespan(app: FastAPI):
 
     logger.info("App %s starting (db=%s)", settings.app_name, settings.db.url)
     # 启动时建表(由 db 模块处理)
-    from app.db.base import init_db
+    from app.db.base import get_session_factory, init_db
 
     await init_db()
     logger.info("Database initialized")
+
+    # v10:播种内置工具,让「工具管理」页有初始数据
+    from app.db.seed import seed_tools
+
+    try:
+        factory = get_session_factory()
+        async with factory() as db:
+            await seed_tools(db)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Seed builtin tools failed (continuing): %s", e)
     yield
     logger.info("App %s shutting down", settings.app_name)

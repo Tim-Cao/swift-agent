@@ -52,4 +52,4 @@ def unzip_archive(zip_path: str, dest_dir: str) -> dict:
     }
 
 
-register_tool("unzip_archive", unzip_archive)
+register_tool("unzip_archive", unzip_archive, display_name="解压 ZIP", builtin=True)

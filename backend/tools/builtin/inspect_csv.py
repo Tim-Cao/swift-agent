@@ -84,4 +84,4 @@ def inspect_csv(csv_path: str, sample_rows: int = 5) -> dict:
     }
 
 
-register_tool("inspect_csv", inspect_csv)
+register_tool("inspect_csv", inspect_csv, display_name="检查 CSV 结构", builtin=True)
