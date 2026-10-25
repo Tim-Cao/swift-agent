@@ -16,17 +16,30 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
-    # 确保 data 目录存在(SQLite 文件)
+    # 确保 data 目录存在(SQLite 文件 + session log 父目录)
     db_path = Path("./data")
     if not db_path.exists():
         db_path.mkdir(parents=True, exist_ok=True)
+    # v9:session log 子目录(每个 session 一个子目录,session.jsonl 在里面)
+    if settings.trajectory_log_enabled:
+        log_root = Path(settings.trajectory_log_dir)
+        if not log_root.exists():
+            log_root.mkdir(parents=True, exist_ok=True)
 
     logger.info("App %s starting (db=%s)", settings.app_name, settings.db.url)
     # 启动时建表(由 db 模块处理)
-    from app.db.base import get_session_factory, init_db
+    from app.db.base import get_engine, get_session_factory, init_db
 
     await init_db()
     logger.info("Database initialized")
+
+    # v10:create_all 只建新表,老库缺列要单独补(幂等)
+    from app.db.migrations import run_additive_migrations
+
+    try:
+        await run_additive_migrations(get_engine())
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Additive migrations failed (continuing): %s", e)
 
     # v11.3:播种内置元数据(工具 / MCP),让「工具管理」「MCP 管理」页有初始数据
     from app.db.seed import seed_all
