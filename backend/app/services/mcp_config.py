@@ -19,11 +19,25 @@ import json
 import logging
 import os
 import re
+from pathlib import Path
 from typing import Any
+
+from dotenv import load_dotenv
 
 from app.db.models import MCPServer
 
 logger = logging.getLogger(__name__)
+
+# 把 backend/.env 载入 os.environ,让 LLM_API_KEY / MINIMAX_API_HOST 这类
+# secret 在**任何**用到 inject_secrets 的地方都可用。
+#
+# 之前这一步只在 app/core/mcp.py 里做(import 那个模块才有副作用),于是
+# 「MCP 管理 → 测试连接」那条路径(只 import mcp_config)拿不到 LLM_API_KEY,
+# 子进程启动即报 MINIMAX_API_KEY environment variable is required。
+# 放在这里,谁 import 谁生效,不再依赖 import 顺序。
+_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
+if _ENV_PATH.exists():
+    load_dotenv(_ENV_PATH, override=False)
 
 # 两种支持的传输方式
 TRANSPORT_STDIO = "stdio"
@@ -82,6 +96,9 @@ def to_client_config(obj: MCPServer) -> dict[str, Any]:
 
         {"transport": "stdio", "command": "uvx", "args": [...], "env": {...}}
         {"transport": "streamable_http", "url": "https://...", "headers": {...}}
+
+    注意:这里**不注入**平台密钥(见 inject_secrets)。调用方拿到配置后要再走
+    一次 inject_secrets,才能真正连上 minimax 这类需要密钥的 server。
     """
     cfg = parse_config(obj.config_json)
 
@@ -103,6 +120,32 @@ def to_client_config(obj: MCPServer) -> dict[str, Any]:
     if isinstance(env, dict) and env:
         out["env"] = {k: _resolve_env(v) for k, v in env.items()}
     return out
+
+
+def inject_secrets(server_cfg: dict[str, Any]) -> dict[str, Any]:
+    """注入 minimax 平台密钥,不修改原 dict。
+
+    - `LLM_API_KEY`(已存在 .env)→ `MINIMAX_API_KEY`
+    - `MINIMAX_API_HOST`(可选,默认 minimaxi.com)→ `MINIMAX_API_HOST`
+
+    启动装载和「测试连接」两条路径都必须过这一步,否则 stdio 子进程拿不到
+    密钥,minimax-coding-plan-mcp 启动即报
+    ``MINIMAX_API_KEY environment variable is required``。
+    """
+    cfg = dict(server_cfg)
+    env = dict(cfg.get("env") or {})
+
+    api_key = env.get("MINIMAX_API_KEY") or os.environ.get("LLM_API_KEY", "")
+    if api_key and "MINIMAX_API_KEY" not in env:
+        env["MINIMAX_API_KEY"] = api_key
+
+    if "MINIMAX_API_HOST" not in env:
+        env["MINIMAX_API_HOST"] = os.environ.get(
+            "MINIMAX_API_HOST", "https://api.minimaxi.com"
+        )
+
+    cfg["env"] = env
+    return cfg
 
 
 def from_client_config(name: str, cfg: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -149,6 +192,7 @@ __all__ = [
     "parse_config",
     "dump_config",
     "to_client_config",
+    "inject_secrets",
     "from_client_config",
     "describe",
 ]
