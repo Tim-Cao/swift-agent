@@ -92,6 +92,9 @@ class AppSettings(BaseSettings):
     # create_deep_agent(debug=...) 开关:开启后 LangGraph 会打印每个 node /
     # tool call / state transition 的详细 trace。生产环境设为 false 减少噪音。
     supervisor_debug: bool = True
+    # 兜底提示词。v11 起 agent 的提示词以**数据库**为准(agents.draft_config /
+    # published_config),这里只是在「DB 里一条 agent 都没有」时给裸 agent 兜个底,
+    # 正常运行时不会被用到。
     supervisor_system_prompt: str = (
         "你是 swift-agent 的 Supervisor,中心调度器。你的职责:\n"
         "\n"
@@ -157,6 +160,12 @@ class AppSettings(BaseSettings):
     # v10:模型发现(OpenAI 兼容 /models)是否校验 TLS 证书。
     # 默认 true(安全);连自签证书的私有部署(如本地 vLLM / Ollama)可设为 false。
     model_discovery_verify_tls: bool = True
+
+    # Session log(每个会话的 JSONL)落盘目录。
+    # 目录布局:<trajectory_log_dir>/<session_id>/session.jsonl
+    # v9:由 SessionLogWriter 写入,SessionLogReader 折叠成 Trajectory。
+    trajectory_log_dir: str = "./data/sessions"
+    trajectory_log_enabled: bool = True
 
 
 

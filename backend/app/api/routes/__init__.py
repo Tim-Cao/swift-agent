@@ -14,6 +14,7 @@ from app.api.routes import (
     models,
     sessions,
     tools,
+    trajectory,
     uploads,
 )
 
@@ -24,6 +25,7 @@ api_router.include_router(messages.router, prefix="/sessions", tags=["messages"]
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(uploads.router, prefix="/uploads", tags=["uploads"])
 api_router.include_router(downloads.router, prefix="/downloads", tags=["downloads"])
+api_router.include_router(trajectory.router, prefix="/sessions", tags=["trajectory"])
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])
 api_router.include_router(mcp.router, prefix="/mcp", tags=["mcp"])
 api_router.include_router(models.providers_router, prefix="/providers", tags=["providers"])
