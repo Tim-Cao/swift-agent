@@ -154,6 +154,11 @@ class AppSettings(BaseSettings):
     server: ServerSettings = ServerSettings()
     persistence: PersistenceSettings = PersistenceSettings()
 
+    # v10:模型发现(OpenAI 兼容 /models)是否校验 TLS 证书。
+    # 默认 true(安全);连自签证书的私有部署(如本地 vLLM / Ollama)可设为 false。
+    model_discovery_verify_tls: bool = True
+
+
 
 @lru_cache
 def get_settings() -> AppSettings:
