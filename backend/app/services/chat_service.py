@@ -219,6 +219,7 @@ async def stream_chat(
     user_message: str,
     upload_dir: str | None = None,
     enable_web_search: bool = False,
+    attachment: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """流式生成前端 SSE 契约事件(后由 chat.py 渲染为 SSE 行)。
 
@@ -236,6 +237,9 @@ async def stream_chat(
       [UPLOAD_DIR:...] 前缀加到 message 里,让 supervisor 识别为 Excel 流水线。
     enable_web_search: 联网搜索开关,True 时 MCP 工具对 LLM 可见,False 时
       由 WebSearchGateMiddleware 在 awrap_model_call 里剔除。
+    attachment: 用户本轮上传的文件描述({name, size_bytes, csv_count}),
+      落进 user 消息的 meta.attachments —— 前端把它渲染成气泡里的文件卡,
+      刷新页面后也能从 list_messages 拿回来。
     """
     # 0. 若有 upload_dir,加 [UPLOAD_DIR:...] 前缀
     llm_message = user_message
@@ -243,7 +247,17 @@ async def stream_chat(
         llm_message = f"[UPLOAD_DIR:{upload_dir}] {user_message}"
 
     # 1. 业务库持久化用户消息 + 触发重命名(用原始 user_message,不带前缀)
-    await repo.append_message(db, session_id=session_id, role="user", content=user_message)
+    #    用户上传的文件记进 meta.attachments,前端气泡里渲染成文件卡
+    user_meta: dict[str, Any] | None = None
+    if attachment:
+        user_meta = {"attachments": [dict(attachment)]}
+    await repo.append_message(
+        db,
+        session_id=session_id,
+        role="user",
+        content=user_message,
+        meta=user_meta,
+    )
     await rename_if_first_user_message(db, session_id, user_message)
     await db.commit()
 

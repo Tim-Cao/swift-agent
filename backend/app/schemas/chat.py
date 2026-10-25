@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -11,3 +13,6 @@ class ChatRequest(BaseModel):
     agent_name: str | None = None
     upload_dir: str | None = None  # 上传后携带,让 Supervisor 知道文件路径
     enable_web_search: bool = False  # 联网搜索开关;由 WebSearchGateMiddleware 按需过滤 MCP 工具
+    # 用户本轮上传的文件描述:{ name, size_bytes, csv_count? }
+    # 落进 user 消息的 meta.attachments,前端把它渲染成气泡里的文件卡
+    attachment: dict[str, Any] | None = None

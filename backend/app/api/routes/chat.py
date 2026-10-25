@@ -64,17 +64,16 @@ async def stream_chat_endpoint(
     async def event_generator():
         session_id, _ = await ensure_session(db, body.session_id, body.agent_name)
         await db.commit()
-        # 若有 upload_dir,把它加到 message 头部让 supervisor 识别
-        message = body.message
-        if body.upload_dir:
-            message = f"[UPLOAD_DIR:{body.upload_dir}] {body.message}".strip()
+        # message 原样传下去 —— [UPLOAD_DIR:...] 前缀由 stream_chat 内部拼,
+        # 这里不要再拼一遍(否则前缀会重复,而且原始消息会被前缀污染落库)
         try:
             async for event in stream_chat(
                 db,
                 session_id,
-                message,
+                body.message,
                 upload_dir=body.upload_dir,
                 enable_web_search=body.enable_web_search,
+                attachment=body.attachment,
             ):
                 yield _format_sse(event)
                 await asyncio.sleep(0)
