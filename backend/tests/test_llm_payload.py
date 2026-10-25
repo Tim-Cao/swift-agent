@@ -96,9 +96,9 @@ class TestNoHardcodedDisabled:
         import ast
         import inspect
 
-        from app.supervisor import agent_runtime, llm
+        from app.supervisor import agent_runtime, builder
 
-        for mod in (agent_runtime, llm):
+        for mod in (agent_runtime, builder):
             tree = ast.parse(inspect.getsource(mod))
             # 收集所有 docstring 的位置,跳过它们(注释里提到 disabled 无妨)
             docstrings = set()

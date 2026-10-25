@@ -243,6 +243,10 @@ class MCPServer(Base):
     config_json: Mapped[str] = mapped_column(Text, default="{}", nullable=False)
     # 该 server 提供的工具名(连接时抓一次,给页面显示)
     tool_names: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
+    # 工具详情 JSON:[{"name":..., "description":..., "parameters":{...}}]
+    # 跟 tool_names 分开存:tool_names 只有名字(轻量、给计数和筛选用),
+    # 详情要带描述和参数,单独一列免得把已有的名字列表格式搞坏。
+    tool_details: Mapped[str] = mapped_column(Text, default="[]", nullable=False)
     # 连接状态:unknown / connected / failed
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="unknown")
     status_detail: Mapped[str] = mapped_column(Text, default="", nullable=False)

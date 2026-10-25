@@ -32,10 +32,10 @@ uv run pytest -q
   - `schemas/` — Pydantic 数据模型
   - `services/` — 业务逻辑(`chat_service` 事件映射 / `session_service`)
   - `supervisor/` — DeepAgents 装配
-    - `llm.py` — `build_chat_model`
+    - `builder.py` — `build_chat_model`(ChatOpenAI 固定模板工厂)
     - `checkpointer.py` — `PERSISTENCE_CHECKPOINTER_BACKEND` 工厂
     - `store.py` — `PERSISTENCE_STORE_BACKEND` 工厂
-    - `builder.py` — `create_deep_agent` 单例装配 + `make_thread_config`
+    - `agent_runtime.py` — 按模型 + 提供商动态构造 ChatOpenAI / 运行时
 - `tools/` `skills/` `middlewares/` `subagents/` — 顶层扩展(空骨架,见根 README 扩展指南)
 - `tests/` — pytest
 - `data/` — SQLite 文件(.gitkeep)

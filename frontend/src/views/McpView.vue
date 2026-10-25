@@ -20,7 +20,7 @@
       :title-of="(m) => m.name"
       :desc-of="descOf"
       :key-of="(m) => m.id"
-      @select="openEditor"
+      @select="openDetails"
     >
       <template #icon>
         <i class="bi bi-plug"></i>
@@ -32,6 +32,12 @@
         </el-tag>
       </template>
       <template #actions="{ item }">
+        <IconButton
+          small
+          icon="bi-pencil"
+          title="编辑"
+          @click="openEditor(item)"
+        />
         <IconButton
           small
           icon="bi-lightning-charge"
@@ -55,6 +61,12 @@
       </template>
     </CardGrid>
 
+    <McpDetails
+      v-model:visible="detailsVisible"
+      :server="detailing"
+      @edit="editFromDetails"
+      @synced="load"
+    />
     <McpEditor v-model:visible="editorVisible" :server="editing" @saved="load" />
   </div>
 </template>
@@ -64,6 +76,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import CardGrid from '../components/CardGrid.vue'
 import IconButton from '../components/IconButton.vue'
+import McpDetails from '../components/McpDetails.vue'
 import McpEditor from '../components/McpEditor.vue'
 import {
   deleteMcpServer,
@@ -75,6 +88,8 @@ const servers = ref([])
 const loading = ref(true)
 const editorVisible = ref(false)
 const editing = ref(null)
+const detailsVisible = ref(false)
+const detailing = ref(null)
 
 onMounted(load)
 
@@ -82,6 +97,11 @@ async function load() {
   loading.value = true
   try {
     servers.value = await listMcpServers()
+    // 详情弹窗开着的话,让它看到最新的数据(同步工具后会刷新)
+    if (detailsVisible.value && detailing.value) {
+      const fresh = servers.value.find((s) => s.id === detailing.value.id)
+      if (fresh) detailing.value = fresh
+    }
   } catch (e) {
     ElMessage.error(e?.response?.data?.detail || '加载 MCP 列表失败')
   } finally {
@@ -106,9 +126,23 @@ function statusType(s) {
   return 'info'
 }
 
+/** 点卡片 → 进详情弹窗 */
+function openDetails(m) {
+  if (!m?.id) return
+  detailing.value = m
+  detailsVisible.value = true
+}
+
 function openEditor(m) {
   editing.value = m?.id ? m : null
   editorVisible.value = true
+}
+
+/** 详情弹窗里点「编辑」→ 关掉详情,打开编辑弹窗(两个弹窗不叠着) */
+function editFromDetails() {
+  if (!detailing.value?.id) return
+  detailsVisible.value = false
+  openEditor(detailing.value)
 }
 
 async function test(m) {

@@ -26,7 +26,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 # .env 的加载已经挪到 app.services.mcp_config(import 它就会 load 一次),
 # 密钥注入统一走那里的 inject_secrets。
-from app.services.mcp_config import inject_secrets
+from app.services.mcp_config import inject_secrets, tool_detail
 
 logger = logging.getLogger(__name__)
 
@@ -77,17 +77,17 @@ async def _load_db_connections() -> tuple[dict[str, dict], list[tuple[str, str, 
 
 async def _save_status(
     records: list[tuple[str, str, str]],
-    results: dict[str, tuple[str, list[str], str]],
+    results: dict[str, tuple[str, list[str], str, list[dict]]],
 ) -> None:
-    """把每个 server 的连接结果写回 DB(status / tool_names)。"""
+    """把每个 server 的连接结果写回 DB(status / tool_names / tool_details)。"""
     from app.db import catalog_repository as cat
     from app.db.base import get_session_factory
 
     factory = get_session_factory()
     async with factory() as db:
         for server_id, name, _transport in records:
-            status, tools, detail = results.get(
-                name, ("unknown", [], "未尝试连接")
+            status, tools, detail, tool_details = results.get(
+                name, ("unknown", [], "未尝试连接", [])
             )
             await cat.update_mcp_server(
                 db,
@@ -95,6 +95,7 @@ async def _save_status(
                 status=status,
                 status_detail=detail,
                 tool_names=json.dumps(tools, ensure_ascii=False),
+                tool_details=json.dumps(tool_details, ensure_ascii=False),
             )
         await db.commit()
 
@@ -132,18 +133,19 @@ async def init_mcp(config_path: Path | str | None = None) -> list[BaseTool]:
 
     # 逐个 server 装载 —— 一个连不上不影响其它
     all_tools: list[BaseTool] = []
-    results: dict[str, tuple[str, list[str], str]] = {}
+    results: dict[str, tuple[str, list[str], str, list[dict]]] = {}
     for name in connections:
         try:
             tools = await _client.get_tools(server_name=name)
         except Exception as e:  # noqa: BLE001
             detail = str(e)[:300]
             logger.warning("[mcp] server %s 装载失败: %s", name, detail)
-            results[name] = ("failed", [], detail)
+            results[name] = ("failed", [], detail, [])
             continue
         names = sorted(t.name for t in tools if getattr(t, "name", None))
         all_tools.extend(tools)
-        results[name] = ("connected", names, f"{len(names)} 个工具")
+        details = [tool_detail(t) for t in tools]
+        results[name] = ("connected", names, f"{len(names)} 个工具", details)
 
     _tools = all_tools
     _tool_names = frozenset(_tool_name(t) for t in _tools if _tool_name(t))
