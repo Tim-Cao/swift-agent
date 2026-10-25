@@ -312,3 +312,175 @@ def test_describe_error_falls_back_to_str():
     from app.api.routes.mcp import _describe_error
 
     assert "boom" in _describe_error(RuntimeError("boom"))
+
+
+# --------------------------------------------------------------------------- #
+# 8) 工具详情:同步接口要把「描述 + 参数」抓回来
+# --------------------------------------------------------------------------- #
+
+
+def test_tool_detail_extracts_name_desc_params():
+    """从 MCP 工具对象里抽出 name / description / 入参 properties。"""
+    from pydantic import BaseModel, Field
+
+    from app.services.mcp_config import tool_detail
+
+    class Args(BaseModel):
+        query: str = Field(..., description="搜索关键字")
+        limit: int = Field(5, description="条数")
+
+    class FakeTool:
+        name = "web_search"
+        description = "搜一下网页"
+        args_schema = Args
+
+    d = tool_detail(FakeTool())
+    assert d["name"] == "web_search"
+    assert d["description"] == "搜一下网页"
+    assert set(d["parameters"]) == {"query", "limit"}
+    assert d["parameters"]["query"]["description"] == "搜索关键字"
+
+
+def test_tool_detail_handles_dict_args_schema():
+    """args_schema 是 dict 时(MCP server 给的原始 JSON Schema)也要认。
+
+    回归:langchain_mcp_adapters 包出来的工具,args_schema 就是一个
+    dict(不是 pydantic 模型)。之前只处理 pydantic 那条路,参数全是空的。
+    """
+    from app.services.mcp_config import tool_detail
+
+    class FakeTool:
+        name = "web_search"
+        description = "搜一下网页"
+        args_schema = {
+            "properties": {"query": {"title": "Query", "type": "string"}},
+            "required": ["query"],
+            "title": "web_searchArguments",
+            "type": "object",
+        }
+
+    d = tool_detail(FakeTool())
+    assert d["name"] == "web_search"
+    assert set(d["parameters"]) == {"query"}
+    assert d["parameters"]["query"]["type"] == "string"
+
+
+def test_tool_detail_tolerates_missing_schema():
+    """工具没有 args_schema 时不该炸,parameters 就是空的。"""
+    from app.services.mcp_config import tool_detail
+
+    class FakeTool:
+        name = "ping"
+        description = ""
+
+    d = tool_detail(FakeTool())
+    assert d == {"name": "ping", "description": "", "parameters": {}}
+
+
+def test_parse_tool_details_skips_bad_entries():
+    """坏条目跳过,好条目照常返回(不能让整个列表挂掉)。"""
+    from app.api.routes.mcp import _parse_tool_details
+
+    raw = json.dumps(
+        [
+            {"name": "a", "description": "甲", "parameters": {"x": {"type": "string"}}},
+            {"description": "没有名字,丢掉"},
+            "不是 dict",
+            {"name": "b"},
+        ]
+    )
+    out = _parse_tool_details(raw)
+    assert [t.name for t in out] == ["a", "b"]
+    assert out[0].description == "甲"
+    assert out[0].parameters == {"x": {"type": "string"}}
+    assert out[1].description == ""
+    assert out[1].parameters == {}
+
+
+def test_parse_tool_details_on_garbage_returns_empty():
+    """列里存了坏 JSON 也不能抛异常。"""
+    from app.api.routes.mcp import _parse_tool_details
+
+    assert _parse_tool_details("not json") == []
+    assert _parse_tool_details(None) == []
+    assert _parse_tool_details('{"a": 1}') == []
+
+
+async def test_sync_endpoint_stores_tool_details(client: AsyncClient, monkeypatch):
+    """同步工具:抓到工具名 + 描述 + 参数,写回 tool_names / tool_details。"""
+    from pydantic import BaseModel, Field
+
+    from app.api.routes import mcp as mcp_route
+
+    class Args(BaseModel):
+        query: str = Field(..., description="关键字")
+
+    class FakeTool:
+        name = "web_search"
+        description = "搜一下网页"
+        args_schema = Args
+
+    async def fake_connect(obj):
+        return [FakeTool()]
+
+    monkeypatch.setattr(mcp_route, "_connect_tools", fake_connect)
+
+    await _clear(client)
+    created = (
+        await client.post(
+            "/api/mcp",
+            json={"name": "sync-mcp", "transport": "stdio", "config": {"command": "x"}},
+        )
+    ).json()
+    sid = created["id"]
+
+    resp = await client.post(f"/api/mcp/{sid}/sync")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["tools"] == ["web_search"]
+    assert body["tool_details"][0]["description"] == "搜一下网页"
+
+    # 再查一次,确认真的落库了
+    out = (await client.get("/api/mcp")).json()[0]
+    assert out["tool_names"] == ["web_search"]
+    assert out["tool_details"][0]["name"] == "web_search"
+    assert out["tool_details"][0]["description"] == "搜一下网页"
+    assert "query" in out["tool_details"][0]["parameters"]
+    assert out["status"] == "connected"
+
+    await _clear(client)
+
+
+async def test_sync_endpoint_reports_failure(client: AsyncClient, monkeypatch):
+    """连不上时返回 ok=False + 人话错误,状态记成 failed。"""
+    from app.api.routes import mcp as mcp_route
+
+    async def boom(obj):
+        raise ValueError("MINIMAX_API_KEY environment variable is required")
+
+    monkeypatch.setattr(mcp_route, "_connect_tools", boom)
+
+    await _clear(client)
+    created = (
+        await client.post(
+            "/api/mcp",
+            json={"name": "fail-mcp", "transport": "stdio", "config": {"command": "x"}},
+        )
+    ).json()
+
+    resp = await client.post(f"/api/mcp/{created['id']}/sync")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert "MINIMAX_API_KEY" in body["error"]
+
+    out = (await client.get("/api/mcp")).json()[0]
+    assert out["status"] == "failed"
+    assert "MINIMAX_API_KEY" in out["status_detail"]
+
+    await _clear(client)
+
+
+async def test_sync_missing_server_returns_404(client: AsyncClient):
+    assert (await client.post("/api/mcp/nope/sync")).status_code == 404

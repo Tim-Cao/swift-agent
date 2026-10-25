@@ -7,6 +7,7 @@ MCP server 的元数据存在 ``mcp_servers`` 表里(v11.3,从 .mcp.json 挪过�
 - PATCH  /api/mcp/{id}            修改
 - DELETE /api/mcp/{id}            删除
 - POST   /api/mcp/{id}/test       测试连接(连一下看能不能拿到工具)
+- POST   /api/mcp/{id}/sync       同步工具列表(抓工具名 + 描述 + 参数)
 - POST   /api/mcp/reload          重新装载全部启用的 server
 """
 
@@ -24,6 +25,7 @@ from app.schemas.catalog import (
     MCPServerCreate,
     MCPServerOut,
     MCPServerUpdate,
+    MCPTool,
 )
 from app.services import mcp_config as mc
 
@@ -40,6 +42,7 @@ def _to_out(obj) -> MCPServerOut:
         config=mc.parse_config(obj.config_json),
         description=mc.describe(obj),
         tool_names=_parse_tool_names(obj.tool_names),
+        tool_details=_parse_tool_details(obj.tool_details),
         status=obj.status,
         status_detail=obj.status_detail,
         enabled=obj.enabled,
@@ -56,6 +59,39 @@ def _parse_tool_names(raw: str | None) -> list[str]:
     except (TypeError, ValueError):
         return []
     return [str(t) for t in data] if isinstance(data, list) else []
+
+
+def _parse_tool_details(raw: str | None) -> list[MCPTool]:
+    """解析 tool_details 列(工具名 + 描述 + 参数)。
+
+    存的是 ``[{"name":..., "description":..., "parameters":{...}}]``。
+    宽容一点:元素不是 dict 就跳过,少了字段就补默认值,别让一个坏条目
+    把整个列表搞挂(那样详情弹窗就一片空白了)。
+    """
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[MCPTool] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        params = item.get("parameters")
+        out.append(
+            MCPTool(
+                name=name,
+                description=str(item.get("description") or ""),
+                parameters=params if isinstance(params, dict) else {},
+            )
+        )
+    return out
 
 
 def _check_transport(transport: str) -> None:
@@ -155,24 +191,8 @@ async def test_mcp(server_id: str, db: AsyncSession = Depends(get_db)) -> dict:
     if obj is None:
         raise HTTPException(status_code=404, detail="MCP server not found")
 
-    from langchain_mcp_adapters.client import MultiServerMCPClient
-
-    # 必须注入密钥:stdio 子进程要靠 MINIMAX_API_KEY 才能起来
-    # (和启动装载路径 app/core/mcp.py 走同一个 inject_secrets)
-    cfg = mc.inject_secrets(mc.to_client_config(obj))
     try:
-        client = MultiServerMCPClient({obj.name: cfg})
-        tools = await client.get_tools()
-        names = sorted(t.name for t in tools)
-        await cat.update_mcp_server(
-            db,
-            server_id,
-            tool_names=json.dumps(names, ensure_ascii=False),
-            status="connected",
-            status_detail=f"{len(names)} 个工具",
-        )
-        await db.commit()
-        return {"ok": True, "tools": names}
+        tools = await _connect_tools(obj)
     except Exception as e:  # noqa: BLE001
         detail = _describe_error(e)
         logger.warning("[mcp] 测试 %s 失败: %s", obj.name, detail)
@@ -184,6 +204,79 @@ async def test_mcp(server_id: str, db: AsyncSession = Depends(get_db)) -> dict:
         )
         await db.commit()
         return {"ok": False, "error": detail}
+
+    names = sorted(t.name for t in tools)
+    await cat.update_mcp_server(
+        db,
+        server_id,
+        tool_names=json.dumps(names, ensure_ascii=False),
+        tool_details=json.dumps(
+            [mc.tool_detail(t) for t in tools], ensure_ascii=False
+        ),
+        status="connected",
+        status_detail=f"{len(names)} 个工具",
+    )
+    await db.commit()
+    return {"ok": True, "tools": names}
+
+
+@router.post("/{server_id}/sync")
+async def sync_mcp_tools(server_id: str, db: AsyncSession = Depends(get_db)) -> dict:
+    """同步工具列表:连一下 server,把工具名 + 描述 + 参数抓回来存库。
+
+    「测试连接」只关心能不能连上;这个接口专门刷新工具清单,给详情弹窗
+    里的工具卡片用。失败时保持上一次的结果不变(只更新状态)。
+    """
+    obj = await cat.get_mcp_server(db, server_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="MCP server not found")
+
+    try:
+        tools = await _connect_tools(obj)
+    except Exception as e:  # noqa: BLE001
+        detail = _describe_error(e)
+        logger.warning("[mcp] 同步 %s 的工具失败: %s", obj.name, detail)
+        await cat.update_mcp_server(
+            db,
+            server_id,
+            status="failed",
+            status_detail=detail,
+        )
+        await db.commit()
+        return {"ok": False, "error": detail, "tools": []}
+
+    names = sorted(t.name for t in tools)
+    details = [mc.tool_detail(t) for t in tools]
+    await cat.update_mcp_server(
+        db,
+        server_id,
+        tool_names=json.dumps(names, ensure_ascii=False),
+        tool_details=json.dumps(details, ensure_ascii=False),
+        status="connected",
+        status_detail=f"{len(names)} 个工具",
+    )
+    await db.commit()
+    return {
+        "ok": True,
+        "tools": names,
+        "tool_details": details,
+    }
+
+
+async def _connect_tools(obj) -> list:
+    """连一个 MCP server,把它提供的工具列表拿回来。
+
+    和启动装载(app/core/mcp.py)走同一条路:
+      - inject_secrets 注入平台密钥(否则 stdio 子进程起不来)
+      - MultiServerMCPClient.get_tools() 拿工具
+
+    失败时抛异常,由调用方翻译成一句人话。
+    """
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    cfg = mc.inject_secrets(mc.to_client_config(obj))
+    client = MultiServerMCPClient({obj.name: cfg})
+    return list(await client.get_tools())
 
 
 @router.post("/reload")

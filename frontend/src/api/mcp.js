@@ -17,5 +17,9 @@ export const deleteMcpServer = (id) =>
 export const testMcpServer = (id) =>
   http.post(`/mcp/${id}/test`).then((r) => r.data)
 
+/** 同步工具列表:抓工具名 + 描述 + 参数写回库 */
+export const syncMcpTools = (id) =>
+  http.post(`/mcp/${id}/sync`).then((r) => r.data)
+
 /** 重新装载全部启用的 server(改了配置之后用) */
 export const reloadMcpServers = () => http.post('/mcp/reload').then((r) => r.data)

@@ -27,6 +27,10 @@ _ADDITIVE_MIGRATIONS: dict[str, list[tuple[str, str]]] = {
     "sessions": [
         ("agent_id", "agent_id VARCHAR(32)"),
     ],
+    # v11.4:MCP 工具详情(带描述/参数),跟只存名字的 tool_names 分开
+    "mcp_servers": [
+        ("tool_details", "tool_details TEXT NOT NULL DEFAULT '[]'"),
+    ],
 }
 
 # 需要额外建的索引(表名, 索引名, DDL)

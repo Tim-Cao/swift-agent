@@ -148,6 +148,15 @@ class ModelDiscoveryResult(BaseModel):
 # ---------- MCP Server ----------
 
 
+class MCPTool(BaseModel):
+    """MCP server 提供的单个工具(详情弹窗里渲染成卡片)。"""
+
+    name: str
+    description: str = ""
+    # 入参 schema(JSON Schema 的 properties),前端展示用
+    parameters: dict[str, Any] = {}
+
+
 class MCPServerOut(BaseModel):
     id: str
     name: str
@@ -160,6 +169,8 @@ class MCPServerOut(BaseModel):
     # 一行话描述(卡片用)
     description: str = ""
     tool_names: list[str] = []
+    # 工具详情(带描述/参数);老库可能还没同步过,会是空列表
+    tool_details: list[MCPTool] = []
     status: str = "unknown"
     status_detail: str = ""
     enabled: bool = True

@@ -148,6 +148,48 @@ def inject_secrets(server_cfg: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
+def tool_detail(tool: Any) -> dict[str, Any]:
+    """从 MCP 工具对象里抽出 {name, description, parameters}。
+
+    MCP 工具是 LangChain 的 BaseTool(``langchain_mcp_adapters`` 包出来的),
+    描述和入参 schema 都在上面:
+      - ``tool.name``
+      - ``tool.description``
+      - ``tool.args_schema`` —— 入参 schema
+
+    ``args_schema`` 的形状有两种:
+      - **dict**:MCP server 直接给的 JSON Schema
+        (``{"properties": {...}, "required": [...], "title": "..."}``)——
+        ``langchain_mcp_adapters`` 包出来的工具就是这种
+      - **pydantic 模型**:自己造的 StructuredTool,取
+        ``model_json_schema()["properties"]``
+
+    两种都要认。形状不认得时只返回 name(总比没有强)。
+    """
+    name = str(getattr(tool, "name", "") or "").strip()
+    desc = str(getattr(tool, "description", "") or "").strip()
+
+    params: dict[str, Any] = {}
+    schema = getattr(tool, "args_schema", None)
+
+    json_schema: Any = None
+    if isinstance(schema, dict):
+        # MCP server 给的原始 JSON Schema
+        json_schema = schema
+    elif schema is not None and hasattr(schema, "model_json_schema"):
+        try:
+            json_schema = schema.model_json_schema()
+        except Exception:  # noqa: BLE001 —— 拿不到就当没有参数
+            json_schema = None
+
+    if isinstance(json_schema, dict):
+        props = json_schema.get("properties")
+        if isinstance(props, dict):
+            params = props
+
+    return {"name": name, "description": desc, "parameters": params}
+
+
 def from_client_config(name: str, cfg: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """.mcp.json 形态的一条 server → (transport, config)。
 
@@ -195,4 +237,5 @@ __all__ = [
     "inject_secrets",
     "from_client_config",
     "describe",
+    "tool_detail",
 ]

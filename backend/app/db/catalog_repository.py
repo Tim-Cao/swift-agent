@@ -449,6 +449,7 @@ async def create_mcp_server(
     transport: str,
     config_json: str = "{}",
     tool_names: str = "[]",
+    tool_details: str = "[]",
     enabled: bool = True,
 ) -> MCPServer:
     obj = MCPServer(
@@ -456,6 +457,7 @@ async def create_mcp_server(
         transport=transport,
         config_json=config_json,
         tool_names=tool_names,
+        tool_details=tool_details,
         enabled=enabled,
     )
     db.add(obj)
@@ -471,6 +473,7 @@ async def update_mcp_server(
     transport: str | None = None,
     config_json: str | None = None,
     tool_names: str | None = None,
+    tool_details: str | None = None,
     status: str | None = None,
     status_detail: str | None = None,
     enabled: bool | None = None,
@@ -486,6 +489,8 @@ async def update_mcp_server(
         obj.config_json = config_json
     if tool_names is not None:
         obj.tool_names = tool_names
+    if tool_details is not None:
+        obj.tool_details = tool_details
     if status is not None:
         obj.status = status
     if status_detail is not None:
