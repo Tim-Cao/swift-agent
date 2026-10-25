@@ -220,6 +220,7 @@ async def stream_chat(
     upload_dir: str | None = None,
     enable_web_search: bool = False,
     attachment: dict[str, Any] | None = None,
+    source: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     """流式生成前端 SSE 契约事件(后由 chat.py 渲染为 SSE 行)。
 
@@ -240,6 +241,9 @@ async def stream_chat(
     attachment: 用户本轮上传的文件描述({name, size_bytes, csv_count}),
       落进 user 消息的 meta.attachments —— 前端把它渲染成气泡里的文件卡,
       刷新页面后也能从 list_messages 拿回来。
+    source: 客户端调用信息({kind, rpcId, clientTimeZone}),落进 user 消息的
+      meta.source 和 session log 的 user_message 事件 —— 轨迹视图的
+      「来源」标签页直接展示它。
     """
     # 0. 若有 upload_dir,加 [UPLOAD_DIR:...] 前缀
     llm_message = user_message
@@ -248,9 +252,14 @@ async def stream_chat(
 
     # 1. 业务库持久化用户消息 + 触发重命名(用原始 user_message,不带前缀)
     #    用户上传的文件记进 meta.attachments,前端气泡里渲染成文件卡
+    #    客户端调用信息记进 meta.source,轨迹视图「来源」标签页展示
     user_meta: dict[str, Any] | None = None
-    if attachment:
-        user_meta = {"attachments": [dict(attachment)]}
+    if attachment or source:
+        user_meta = {}
+        if attachment:
+            user_meta["attachments"] = [dict(attachment)]
+        if source:
+            user_meta["source"] = dict(source)
     await repo.append_message(
         db,
         session_id=session_id,
@@ -280,29 +289,36 @@ async def stream_chat(
         if log_writer.was_empty_on_open:
             # v10:system prompt 取决于会话实际用的 agent(DB 驱动的 agent
             # 有自己的 prompt);没有绑定 agent 时才是默认 supervisor prompt。
+            # v11.4:同时把 agent 的 tool_ids 一起记下来 —— 轨迹视图的
+            # 「工具」标签页据此 join tools 表拿到工具名 / 描述。
+            from app.db import catalog_repository as cat
+
             session_rec = await repo.get_session(db, session_id)
             prompt_text = settings.supervisor_system_prompt
             agent_label = None
+            tool_ids: list[str] = []
+            agent_rec = None
             if session_rec is not None and session_rec.agent_id:
-                from app.db import catalog_repository as cat
-
                 agent_rec = await cat.get_agent(db, session_rec.agent_id)
-                if agent_rec is None:
-                    agent_rec = await cat.get_default_agent(db)
-                if agent_rec is not None:
-                    cfg = cat.parse_agent_config(
-                        agent_rec.published_config
-                        if agent_rec.published
-                        else agent_rec.draft_config
-                    )
-                    prompt_text = cfg.get("system_prompt") or prompt_text
-                    agent_label = agent_rec.name
+            if agent_rec is None:
+                # 会话没绑 agent → 用默认 agent(和 resolve_agent_for_session 一致)
+                agent_rec = await cat.get_default_agent(db)
+            if agent_rec is not None:
+                cfg = cat.parse_agent_config(
+                    agent_rec.published_config
+                    if agent_rec.published
+                    else agent_rec.draft_config
+                )
+                prompt_text = cfg.get("system_prompt") or prompt_text
+                agent_label = agent_rec.name
+                tool_ids = list(cfg.get("tool_ids") or [])
             await log_writer.append(
                 "system_prompt",
                 {
                     "content": prompt_text,
                     "reason": "initial",
                     "agent_name": agent_label,
+                    "tool_ids": tool_ids,
                 },
             )
         await log_writer.append(
@@ -311,7 +327,7 @@ async def stream_chat(
         )
         await log_writer.append(
             "user_message",
-            {"content": user_message},
+            {"content": user_message, "source": source},
         )
 
         # 3. 调用 agent:input 只传本轮增量 user message。

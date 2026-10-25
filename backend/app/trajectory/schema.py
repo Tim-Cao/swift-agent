@@ -116,12 +116,18 @@ class SystemPromptRecord(BaseModel):
     参考 deepseek-harness 的 ``request/header`` 设计:
     - 只在会话首次 / 真正变化时才追加(不每 turn 重复)
     - UI 把 initial 那条钉在 timeline 顶部,后续 change 按 seq 插入
+
+    ``agent_name`` / ``tool_ids`` 是 v11.4 补的:记录这条提示词来自哪个
+    agent、绑定了哪些工具。前端「工具」标签页据此 join tools 表拿到
+    工具的展示名 / 描述。老 JSONL 没有这两个字段 → 空值,前端走回退路径。
     """
 
     seq: int
     time: float
     content: str
     reason: Literal["initial", "change"] = "initial"
+    agent_name: str | None = None
+    tool_ids: list[str] = Field(default_factory=list)
 
 
 class TrajectoryTurn(BaseModel):
@@ -132,6 +138,8 @@ class TrajectoryTurn(BaseModel):
     ended_at: float | None = None
     ended_reason: str | None = None  # normal / error / abort
     user_message: str = ""
+    # 客户端调用信息:{ kind, rpcId, clientTimeZone }(v11.4 新增,老数据为空)
+    user_message_source: dict[str, Any] | None = None
     steps: list[TrajectoryStep] = Field(default_factory=list)
 
 

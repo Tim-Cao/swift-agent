@@ -16,3 +16,7 @@ class ChatRequest(BaseModel):
     # 用户本轮上传的文件描述:{ name, size_bytes, csv_count? }
     # 落进 user 消息的 meta.attachments,前端把它渲染成气泡里的文件卡
     attachment: dict[str, Any] | None = None
+    # 客户端调用信息:{ kind, rpcId, clientTimeZone }
+    # 落进 user 消息的 meta.source 和 session log 的 user_message 事件,
+    # 轨迹视图的「来源」标签页直接展示它。
+    source: dict[str, Any] | None = None

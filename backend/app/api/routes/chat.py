@@ -74,6 +74,7 @@ async def stream_chat_endpoint(
                 upload_dir=body.upload_dir,
                 enable_web_search=body.enable_web_search,
                 attachment=body.attachment,
+                source=body.source,
             ):
                 yield _format_sse(event)
                 await asyncio.sleep(0)

@@ -18,6 +18,21 @@ async def list_sessions(db: AsyncSession = Depends(get_db)) -> list[SessionOut]:
     return [SessionOut.model_validate(o) for o in objs]
 
 
+@router.get("/{session_id}", response_model=SessionOut)
+async def get_session(
+    session_id: str, db: AsyncSession = Depends(get_db)
+) -> SessionOut:
+    """取单个会话。
+
+    轨迹视图用它拿会话绑定的 agent_id(→ agent 配置 → tool_ids),
+    给老会话(system_prompt 事件没记 tool_ids)做回退。
+    """
+    obj = await repo.get_session(db, session_id)
+    if obj is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return SessionOut.model_validate(obj)
+
+
 @router.post("", response_model=SessionOut)
 async def create_session(
     body: SessionCreate, db: AsyncSession = Depends(get_db)
