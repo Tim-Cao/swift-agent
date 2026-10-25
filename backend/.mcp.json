@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "minimax_coding_plan": {
+      "transport": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from", "minimax-coding-plan-mcp",
+        "--with", "mcp<2",
+        "minimax-coding-plan-mcp"
+      ],
+      "env": {}
+    }
+  }
+}

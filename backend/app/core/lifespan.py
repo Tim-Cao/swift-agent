@@ -28,14 +28,27 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("Database initialized")
 
-    # v10:播种内置工具,让「工具管理」页有初始数据
-    from app.db.seed import seed_tools
+    # v11.3:播种内置元数据(工具 / MCP),让「工具管理」「MCP 管理」页有初始数据
+    from app.db.seed import seed_all
 
     try:
         factory = get_session_factory()
         async with factory() as db:
-            await seed_tools(db)
+            await seed_all(db)
     except Exception as e:  # noqa: BLE001
-        logger.warning("Seed builtin tools failed (continuing): %s", e)
+        logger.warning("Seed builtin metadata failed (continuing): %s", e)
+
+    # 启动 MCP 客户端(必须在 supervisor 第一次构建之前完成)
+    from app.core.mcp import init_mcp, shutdown_mcp
+
+    try:
+        await init_mcp()
+    except Exception as e:  # noqa: BLE001
+        # MCP 启动失败不应阻塞 backend 启动;supervisor 会因缺工具而 warn
+        logger.warning("MCP init failed (continuing without MCP): %s", e)
+
     yield
+
+    # 关闭 MCP 客户端
+    await shutdown_mcp()
     logger.info("App %s shutting down", settings.app_name)
