@@ -68,24 +68,29 @@
 
     <!-- 主内容 -->
     <main class="content">
-      <!-- 侧边栏展开 / 收起:浮在内容区左上角 -->
-      <el-tooltip
-        :content="collapsed ? '展开侧边栏' : '收起侧边栏'"
-        placement="bottom"
-        effect="dark"
-      >
-        <button
-          type="button"
-          class="collapse-btn"
-          :aria-expanded="!collapsed"
-          :aria-label="collapsed ? '展开侧边栏' : '收起侧边栏'"
-          @click="collapsed = !collapsed"
+      <!-- 顶部工具条:侧边栏展开/收起按钮独占一行,
+           和下面的正文之间有一条分割线。 -->
+      <div class="content-bar">
+        <el-tooltip
+          :content="collapsed ? '展开侧边栏' : '收起侧边栏'"
+          placement="bottom"
+          effect="dark"
         >
-          <i class="bi bi-layout-sidebar"></i>
-        </button>
-      </el-tooltip>
+          <button
+            type="button"
+            class="collapse-btn"
+            :aria-expanded="!collapsed"
+            :aria-label="collapsed ? '展开侧边栏' : '收起侧边栏'"
+            @click="collapsed = !collapsed"
+          >
+            <i class="bi bi-layout-sidebar"></i>
+          </button>
+        </el-tooltip>
+      </div>
 
-      <slot />
+      <div class="content-body">
+        <slot />
+      </div>
     </main>
   </div>
 </template>
@@ -190,22 +195,32 @@ defineExpose({ go })
   white-space: nowrap;
 }
 
-/* 收起 / 展开侧边栏:浮在主内容区左上角 */
+/* 顶部工具条:侧边栏展开/收起按钮独占一行。
+   之前这个按钮是绝对定位浮在内容区左上角的,跟「智能体编辑页」的
+   返回箭头会叠在一起(两个图标都在左上角)。改成独立的行 + 分割线,
+   位置冲突就不存在了。 */
+.content-bar {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 44px;
+  padding: 0 var(--n-gap-md);
+  background: var(--n-bg);
+  border-bottom: 1px solid var(--n-border);
+}
+
+/* 收起 / 展开侧边栏 */
 .collapse-btn {
-  position: absolute;
-  top: var(--n-gap-sm);
-  left: var(--n-gap-sm);
-  z-index: 20;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
-  border: 1px solid var(--n-border);
+  border: 1px solid transparent;
   border-radius: var(--n-radius);
-  background: var(--n-bg-card);
-  color: var(--n-text-secondary);
+  background: transparent;
+  color: var(--n-text-tertiary);
   cursor: pointer;
   font-size: 15px;
   transition:
@@ -215,7 +230,7 @@ defineExpose({ go })
 }
 .collapse-btn:hover {
   background: var(--n-bg-hover);
-  border-color: var(--n-border-strong);
+  border-color: var(--n-border);
   color: var(--n-text);
 }
 
@@ -241,7 +256,8 @@ defineExpose({ go })
   display: none;
 }
 .sidebar-collapsed .collapse-btn {
-  margin-left: 0;
+  /* 图标方向跟着侧边栏状态翻转(收起时指向右边) */
+  transform: scaleX(-1);
 }
 .sidebar-collapsed .nav-item,
 .sidebar-collapsed .nav-toggle {
@@ -389,8 +405,18 @@ defineExpose({ go })
 
 .content {
   flex: 1;
-  overflow-y: auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--n-bg);
-  position: relative;
+}
+
+/* 正文:占满剩下的高度,自己滚动(工具条固定在顶部不动) */
+.content-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 </style>
